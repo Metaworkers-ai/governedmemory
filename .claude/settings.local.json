@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(*)",
+      "Bash(*)",
+      "Read(*)",
+      "Write(*)",
+      "Read(//c/Users/nomul/AppData/Roaming/Claude/local-agent-mode-sessions/skills-plugin/8ee8ad3c-b9ed-4fd1-8c20-e640d2bd5c1e/eb0300fc-a535-44bf-b089-b28a9e9438f8/skills/pptx/**)",
+      "Bash(python -m markitdown \"C:\\\\Users\\\\nomul\\\\Downloads\\\\Metaworkers_PreSeed_Revised_InvestorDeck_0601.pptx\")",
+      "Bash(conda run *)",
+      "PowerShell(conda activate mw)",
+      "PowerShell(python -m markitdown \"C:\\\\Users\\\\nomul\\\\Downloads\\\\Metaworkers_PreSeed_Revised_InvestorDeck_0601.pptx\" 2>&1)",
+      "PowerShell(Get-ChildItem \"C:\\\\ProgramData\\\\anaconda3\\\\envs\" -ErrorAction SilentlyContinue; Get-ChildItem \"$env:USERPROFILE\\\\anaconda3\\\\envs\" -ErrorAction SilentlyContinue; Get-ChildItem \"$env:USERPROFILE\\\\.conda\\\\envs\" -ErrorAction SilentlyContinue)",
+      "PowerShell(& \"$env:USERPROFILE\\\\.conda\\\\envs\\\\mw\\\\python.exe\" -m pip install \"markitdown[pptx]\" -q 2>&1 | Select-Object -Last 5)"
+    ]
+  }
+}
