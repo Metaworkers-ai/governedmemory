@@ -133,6 +133,34 @@ The schema is now live. You're ready to use the store.
 
 ---
 
+## Try it in a browser
+
+A Streamlit UI is included so you can try E1 end-to-end without writing any Python.
+It talks directly to `MemoryStore` — there's no REST API yet (that's E7).
+
+```bash
+# Windows PowerShell, macOS, Linux — same command
+pip install -r requirements-frontend.txt
+streamlit run frontend/app.py
+```
+
+Opens at `http://localhost:8501`. Tabs:
+
+| Tab | What it does |
+|---|---|
+| Write | Write a memory with provenance (source type, confidence, purpose) |
+| Browse | List memories for a customer, expand to see full record |
+| Search | Vector (semantic) and lexical (full-text) search side by side |
+| Governance | Quarantine or delete a memory |
+| Tenant Isolation | Write as tenant A, prove tenant B cannot read it |
+| Audit Log | View the hash-chained audit trail — each event's `prev_hash` matches the prior event's `hash` |
+
+By default it uses `NullEmbeddingProvider` (zero vectors) unless `sentence-transformers` is
+installed (`pip install -r requirements-embed-local.txt`), in which case vector search
+becomes real semantic search.
+
+---
+
 ## Manual Testing (E1)
 
 These steps verify the E1 definition of done end-to-end.
@@ -482,12 +510,15 @@ governedmemory/
 ├── deploy/
 │   ├── docker-compose.yml  ← Local Postgres+pgvector
 │   └── .env.example
+├── frontend/
+│   └── app.py              ← Streamlit UI — try E1 end-to-end in a browser
 ├── tests/
 │   ├── unit/               ← 28 tests, no Docker
 │   └── integration/        ← 21 tests, needs Docker
 ├── CONTRIBUTING.md
 ├── requirements-core.txt
 ├── requirements-embed-local.txt
+├── requirements-frontend.txt
 └── requirements-dev.txt
 ```
 

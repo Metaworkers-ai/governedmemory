@@ -1,0 +1,4 @@
+# Streamlit UI for trying E1 end-to-end in a browser
+-r requirements-core.txt
+
+streamlit>=1.38

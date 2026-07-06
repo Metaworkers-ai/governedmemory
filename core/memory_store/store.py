@@ -379,6 +379,20 @@ class MemoryStore:
     # Audit (hash-chained, append-only)
     # ------------------------------------------------------------------
 
+    def list_audit(self, tenant_id: str, limit: int = 50) -> List[dict]:
+        """Recent audit events for a tenant, newest first — for inspection/debugging."""
+        _require_tenant(tenant_id)
+        with self._conn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    """SELECT id, ts, agent_id, session_id, op, memory_ids,
+                              outcome, reason, policy_id, hash, prev_hash
+                       FROM audit WHERE tenant_id = %s
+                       ORDER BY ts DESC LIMIT %s""",
+                    (tenant_id, limit),
+                )
+                return [dict(r) for r in cur.fetchall()]
+
     def _audit(self, tenant_id: str, agent_id: str, session_id: str,
                op: AuditOp, memory_ids: List[str], decision: AuditDecision) -> None:
         conn = psycopg2.connect(self._dsn)

@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "streamlit-frontend",
+      "runtimeExecutable": "conda",
+      "runtimeArgs": ["run", "-n", "mw", "streamlit", "run", "frontend/app.py", "--server.headless", "true"],
+      "port": 8501
+    }
+  ]
+}
