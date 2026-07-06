@@ -159,6 +159,20 @@ By default it uses `NullEmbeddingProvider` (zero vectors) unless `sentence-trans
 installed (`pip install -r requirements-embed-local.txt`), in which case vector search
 becomes real semantic search.
 
+### Demo data (for showing E1 to a customer)
+
+`scripts/demo_data.py` defines one tenant (`solstice-cloud`), five fictional customers, and
+50 realistic support/sales/billing memories — including 5 with embedded prompt-injection
+attempts (phishing emails, poisoned web scrapes) that get auto-tainted `untrusted` on write,
+a great live-demo moment.
+
+```bash
+# Windows PowerShell, macOS, Linux — same command
+python scripts/seed_demo.py --reset   # wipe + populate the demo tenant
+python scripts/categorize_demo.py     # readiness check: counts, taint/purpose breakdown, audit chain
+streamlit run frontend/app.py         # sidebar already defaults to the demo tenant
+```
+
 ---
 
 ## Manual Testing (E1)

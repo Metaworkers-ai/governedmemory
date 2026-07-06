@@ -58,15 +58,17 @@ st.caption("Every write is tenant-scoped, provenance-tracked, and audit-logged. 
 
 with st.sidebar:
     st.header("Context")
-    tenant_id = st.text_input("Tenant ID", value="acme-corp")
-    customer_id = st.text_input("Customer ID", value="cust-jane-001")
+    tenant_id = st.text_input("Tenant ID", value="solstice-cloud")
+    customer_id = st.text_input("Customer ID", value="cust-maria-chen")
     agent_id = st.text_input("Agent ID", value="cx-agent-1")
-    session_id = st.text_input("Session ID", value="session-42")
+    session_id = st.text_input("Session ID", value="demo-session")
     st.divider()
     if tenant_id:
         stats = store.get_stats(tenant_id)
         st.metric("Memories (this tenant)", stats["total_memories"])
         st.metric("Customers (this tenant)", stats["total_customers"])
+        if stats["total_memories"] == 0:
+            st.caption("No data yet — run `python scripts/seed_demo.py` to populate the demo.")
 
 tab_write, tab_browse, tab_search, tab_governance, tab_isolation, tab_audit = st.tabs(
     ["Write", "Browse", "Search", "Governance", "Tenant Isolation", "Audit Log"]
