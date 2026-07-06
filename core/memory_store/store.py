@@ -32,6 +32,7 @@ from core.models.memory_record import (
 from core.models.audit_event import AuditActor, AuditDecision, AuditOp, AuditOutcome
 from core.memory_store.embeddings import EmbeddingProvider
 from core.write_governor import scan_for_injection, find_duplicate
+from core.retrieval_engine import reciprocal_rank_fusion, apply_privilege_gate
 
 _UNTRUSTED_SOURCE_TYPES = {SourceType.UNTRUSTED_WEB, SourceType.UNTRUSTED_EMAIL}
 _INJECTION_THRESHOLD = float(os.getenv("INJECTION_THRESHOLD", "0.7"))
@@ -329,7 +330,14 @@ class MemoryStore:
                 return [dict(r) for r in cur.fetchall()]
 
     def vector_search(self, query: str, tenant_id: str, k: int = 10) -> List[MemoryRecord]:
-        """Semantic similarity search — cosine distance via pgvector."""
+        """
+        Semantic similarity search — cosine distance via pgvector.
+
+        Raw primitive: does NOT apply the privilege gate (taint/purpose
+        filtering) or emit an audit event. Use retrieve() for governed,
+        audited retrieval — this exists for direct inspection/debugging
+        and as a building block retrieve() calls internally.
+        """
         _require_tenant(tenant_id)
         embedding = self._embedder.embed(query)
         with self._conn() as conn:
@@ -349,7 +357,12 @@ class MemoryStore:
         return [_row_to_record(r) for r in rows]
 
     def lexical_search(self, query: str, tenant_id: str, k: int = 10) -> List[MemoryRecord]:
-        """Full-text search via Postgres tsvector (lexical leg of hybrid retrieval)."""
+        """
+        Full-text search via Postgres tsvector.
+
+        Raw primitive: does NOT apply the privilege gate (taint/purpose
+        filtering) or emit an audit event — same caveat as vector_search().
+        """
         _require_tenant(tenant_id)
         with self._conn() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -367,13 +380,53 @@ class MemoryStore:
                 rows = cur.fetchall()
         return [_row_to_record(r) for r in rows]
 
+    def retrieve(self, query: str, tenant_id: str, agent_id: str, session_id: str,
+                 purpose: Optional[str] = None, k: int = 10,
+                 include_untrusted: bool = False) -> List[MemoryRecord]:
+        """
+        Governed hybrid retrieval — the Retrieval Engine (E3).
+
+        This is the entry point agents should use, not vector_search()/
+        lexical_search() directly. Combines both via reciprocal rank fusion,
+        applies the privilege gate (taint + purpose-binding filtering), and
+        emits an audit event either way — so "who read what, for what
+        purpose, and was anything filtered out" is always answerable.
+        """
+        _require_tenant(tenant_id)
+
+        # Over-fetch before gating so filtering doesn't starve the final k.
+        fetch_k = max(k * 3, 20)
+        vector_results = self.vector_search(query, tenant_id, k=fetch_k)
+        lexical_results = self.lexical_search(query, tenant_id, k=fetch_k)
+
+        fused_scores = reciprocal_rank_fusion([
+            [r.id for r in vector_results],
+            [r.id for r in lexical_results],
+        ])
+        by_id = {r.id: r for r in vector_results + lexical_results}
+        ranked = [by_id[i] for i in sorted(fused_scores, key=fused_scores.get, reverse=True)]
+
+        gated = apply_privilege_gate(ranked, purpose=purpose, include_untrusted=include_untrusted)
+        results = gated[:k]
+
+        filtered_count = len(ranked) - len(gated)
+        reason = f"retrieved {len(results)} of {len(ranked)} fused candidates"
+        if filtered_count:
+            reason += f"; {filtered_count} filtered by privilege gate"
+        outcome = AuditOutcome.GATED if filtered_count else AuditOutcome.ALLOW
+
+        self._audit(tenant_id, agent_id, session_id, AuditOp.RETRIEVE,
+                    [r.id for r in results],
+                    AuditDecision(outcome=outcome, reason=reason))
+        return results
+
     # ------------------------------------------------------------------
     # Governance mutations
     # ------------------------------------------------------------------
 
     def quarantine(self, memory_id: str, tenant_id: str,
                    reason: str = "manual quarantine") -> bool:
-        """Mark a memory as quarantined — blocked by the privilege gate on retrieval."""
+        """Mark a memory as quarantined — excluded by retrieve()'s privilege gate (E3)."""
         _require_tenant(tenant_id)
         with self._conn() as conn:
             with conn.cursor() as cur:

@@ -117,9 +117,12 @@ governedmemory/
 │   ├── memory_store/           ← Storage layer (E1)
 │   │   ├── store.py            ← MemoryStore class + init_db() + schema (_SCHEMA_SQL)
 │   │   └── embeddings.py       ← EmbeddingProvider ABC + pluggable implementations
-│   └── write_governor/         ← Write Governor (E2) — runs inside every MemoryStore.write()
-│       ├── injection_scanner.py ← Heuristic, rule-based prompt-injection scorer
-│       └── dedup.py             ← Exact-duplicate detection + version supersession
+│   ├── write_governor/         ← Write Governor (E2) — runs inside every MemoryStore.write()
+│   │   ├── injection_scanner.py ← Heuristic, rule-based prompt-injection scorer
+│   │   └── dedup.py             ← Exact-duplicate detection + version supersession
+│   └── retrieval_engine/       ← Retrieval Engine (E3) — runs inside MemoryStore.retrieve()
+│       ├── fusion.py            ← Reciprocal rank fusion (vector + lexical)
+│       └── privilege_gate.py    ← Taint + purpose-binding enforcement on read
 │
 ├── frontend/
 │   └── app.py                  ← Streamlit UI — try the store end-to-end in a browser
@@ -150,7 +153,6 @@ governedmemory/
 
 ```
 core/
-├── retrieval_engine/           ← E3: hybrid vector+lexical search + privilege gate
 ├── policy_engine/              ← E4: policy evaluator (OPA-ready)
 ├── detection/                  ← E5: injection scanner + taint classifier
 └── audit/                      ← E6: provenance graph + cascade purge
@@ -215,11 +217,10 @@ pytest tests/integration/ -v
 
 These spin up a real Postgres+pgvector container via testcontainers (Docker required). First run takes ~15 seconds to pull the image. Subsequent runs are fast.
 
-These tests verify the E1 definition of done:
-- Write + read a record end-to-end
-- Tenant isolation (cross-tenant reads return None)
-- `init_db()` idempotency (running it twice is safe)
-- Hash-chained audit log correctness
+These tests verify the definition of done across epics:
+- Write + read a record end-to-end, tenant isolation, `init_db()` idempotency, hash-chained audit log (E1)
+- Content-based injection tainting independent of `source_type`, dedup/supersede on duplicate writes (E2)
+- `retrieve()` excludes untrusted/quarantined by default, enforces purpose binding, respects `k`, emits an audit event (E3)
 
 ### Full suite with coverage
 

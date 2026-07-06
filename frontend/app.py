@@ -177,17 +177,39 @@ with tab_browse:
 with tab_search:
     st.subheader("Search (tenant-scoped)")
     query = st.text_input("Query", placeholder="refund policy")
-    search_col1, search_col2 = st.columns(2)
+    purpose_filter = st.text_input("Purpose (optional)", placeholder="e.g. billing, cx_support, sales",
+                                     help="If set, only records with this purpose in allowed_purposes "
+                                          "(or an empty allowed_purposes — open to any) are returned.")
+    include_untrusted = st.checkbox("Include untrusted/quarantined (bypass the privilege gate)")
 
     if query and tenant_id:
+        st.markdown("### `retrieve()` — governed hybrid search (E3)")
+        st.caption("Reciprocal rank fusion over vector + lexical, then the privilege gate "
+                   "(taint + purpose). This is what agents should actually call.")
+        gated_results = store.retrieve(query, tenant_id, agent_id, session_id,
+                                        purpose=purpose_filter or None, k=5,
+                                        include_untrusted=include_untrusted)
+        if not gated_results:
+            st.write("No results — try a broader query, a different purpose, or check the untrusted box.")
+        for r in gated_results:
+            taint_icon = {"trusted": "✅", "untrusted": "⚠️", "quarantined": "🚫"}[r.trust.taint.value]
+            st.write(f"- {taint_icon} {r.content[:100]}  `purposes={r.purpose.allowed_purposes or ['any']}`")
+
+        st.divider()
+        st.markdown("### Raw primitives (ungated — for comparison only)")
+        st.caption("vector_search()/lexical_search() apply no taint or purpose filtering. "
+                   "This is what agents got before E3 — notice untrusted/quarantined records can appear here.")
+        search_col1, search_col2 = st.columns(2)
         with search_col1:
             st.markdown("**Vector search** (semantic)")
             for r in store.vector_search(query, tenant_id, k=5):
-                st.write(f"- {r.content[:100]}")
+                taint_icon = {"trusted": "✅", "untrusted": "⚠️", "quarantined": "🚫"}[r.trust.taint.value]
+                st.write(f"- {taint_icon} {r.content[:100]}")
         with search_col2:
             st.markdown("**Lexical search** (full-text)")
             for r in store.lexical_search(query, tenant_id, k=5):
-                st.write(f"- {r.content[:100]}")
+                taint_icon = {"trusted": "✅", "untrusted": "⚠️", "quarantined": "🚫"}[r.trust.taint.value]
+                st.write(f"- {taint_icon} {r.content[:100]}")
 
 # ---------------------------------------------------------------------------
 # Governance
