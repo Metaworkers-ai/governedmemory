@@ -1,0 +1,5 @@
+# Core runtime dependencies — required for the memory store to function
+pydantic>=2.9.0,<3.0
+psycopg2-binary>=2.9.9    # Postgres driver (binary = no compile step needed)
+pgvector>=0.3.0           # pgvector Python type adapter for psycopg2
+python-dotenv>=1.0.0      # load DATABASE_URL and other env vars from .env

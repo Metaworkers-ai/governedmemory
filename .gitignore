@@ -5,3 +5,11 @@ __pycache__/
 *.log
 *.pid
 .env
+.venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+*.pth
