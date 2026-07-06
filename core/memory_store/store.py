@@ -287,6 +287,19 @@ class MemoryStore:
                 rows = cur.fetchall()
         return [_row_to_record(r) for r in rows]
 
+    def list_customers(self, tenant_id: str) -> List[dict]:
+        """Distinct customers for a tenant, with memory counts — for navigation UIs."""
+        _require_tenant(tenant_id)
+        with self._conn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    """SELECT customer_id, COUNT(*) AS memory_count, MAX(created_at) AS last_activity
+                       FROM memory WHERE tenant_id = %s
+                       GROUP BY customer_id ORDER BY last_activity DESC""",
+                    (tenant_id,),
+                )
+                return [dict(r) for r in cur.fetchall()]
+
     def vector_search(self, query: str, tenant_id: str, k: int = 10) -> List[MemoryRecord]:
         """Semantic similarity search — cosine distance via pgvector."""
         _require_tenant(tenant_id)

@@ -56,10 +56,29 @@ if isinstance(embedder, NullEmbeddingProvider):
 st.title("Governed Memory — E1 Demo")
 st.caption("Every write is tenant-scoped, provenance-tracked, and audit-logged. Try to break tenant isolation.")
 
+NEW_CUSTOMER_SENTINEL = "+ New customer…"
+
 with st.sidebar:
     st.header("Context")
     tenant_id = st.text_input("Tenant ID", value="solstice-cloud")
-    customer_id = st.text_input("Customer ID", value="cust-maria-chen")
+
+    customers = store.list_customers(tenant_id) if tenant_id else []
+    if customers:
+        counts = {c["customer_id"]: c["memory_count"] for c in customers}
+        options = [NEW_CUSTOMER_SENTINEL] + [c["customer_id"] for c in customers]
+        default_index = options.index("cust-maria-chen") if "cust-maria-chen" in options else 1
+        chosen = st.selectbox(
+            "Customer ID  (type to search)",
+            options,
+            index=default_index,
+            format_func=lambda cid: cid if cid == NEW_CUSTOMER_SENTINEL else f"{cid}  ({counts[cid]})",
+        )
+        customer_id = st.text_input("New customer ID", value="cust-new-001") if chosen == NEW_CUSTOMER_SENTINEL else chosen
+    else:
+        customer_id = st.text_input("Customer ID", value="cust-maria-chen")
+        if tenant_id:
+            st.caption("No customers yet for this tenant — type a new customer ID to write the first memory.")
+
     agent_id = st.text_input("Agent ID", value="cx-agent-1")
     session_id = st.text_input("Session ID", value="demo-session")
     st.divider()
@@ -117,6 +136,19 @@ with tab_write:
 # Browse
 # ---------------------------------------------------------------------------
 with tab_browse:
+    st.subheader(f"Customers in tenant `{tenant_id}`")
+    if tenant_id and customers:
+        filter_text = st.text_input("Filter by customer ID", placeholder="type to search", key="customer_filter")
+        filtered = [c for c in customers if filter_text.lower() in c["customer_id"].lower()] if filter_text else customers
+        st.dataframe(
+            [{"Customer ID": c["customer_id"], "Memories": c["memory_count"], "Last activity": str(c["last_activity"])}
+             for c in filtered],
+            use_container_width=True, hide_index=True,
+        )
+    elif tenant_id:
+        st.write("No customers yet — write a memory in the **Write** tab.")
+
+    st.divider()
     st.subheader(f"Memories for `{customer_id}` in tenant `{tenant_id}`")
     if st.button("Refresh", key="refresh_browse"):
         st.cache_data.clear()
