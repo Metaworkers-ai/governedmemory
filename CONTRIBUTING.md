@@ -83,13 +83,11 @@ docker compose -f deploy/docker-compose.yml up -d
 docker compose -f deploy/docker-compose.yml ps
 ```
 
-### 5. Run migrations
+### 5. Create the database schema
 
 ```bash
-python -m core.memory_store.migrate
-# Expected output:
-# [migrate] Applying 001_init.sql ... done.
-# [migrate] 1 migration(s) applied.
+python -c "import os; from dotenv import load_dotenv; from core.memory_store import init_db; load_dotenv(); init_db(os.environ['DATABASE_URL'])"
+# Prints nothing on success. Safe to run multiple times (all DDL uses IF NOT EXISTS).
 ```
 
 ### 6. Verify the setup
@@ -116,13 +114,16 @@ governedmemory/
 │   │   ├── audit_event.py      ← AuditEvent (append-only, hash-chained)
 │   │   └── policy.py           ← Policy, PurposeBinding, PrivilegeRules
 │   └── memory_store/           ← Storage layer (E1)
-│       ├── store.py            ← MemoryStore class (write/read/search/quarantine/delete)
-│       ├── embeddings.py       ← EmbeddingProvider ABC + pluggable implementations
-│       ├── migrate.py          ← SQL migration runner (run with: python -m core.memory_store.migrate)
-│       └── migrations/
-│           └── 001_init.sql    ← Initial schema (memory, audit, policy tables)
+│       ├── store.py            ← MemoryStore class + init_db() + schema (_SCHEMA_SQL)
+│       └── embeddings.py       ← EmbeddingProvider ABC + pluggable implementations
 │
-├── metaworkers-mvp/            ← Original MVP (SQLite, kept for reference)
+├── frontend/
+│   └── app.py                  ← Streamlit UI — try the store end-to-end in a browser
+│
+├── scripts/
+│   ├── demo_data.py             ← Shared demo dataset (one tenant, five customers, 50 memories)
+│   ├── seed_demo.py             ← Populate the demo tenant
+│   └── categorize_demo.py       ← Readiness report: taint/source/purpose breakdown, audit chain check
 │
 ├── deploy/
 │   ├── docker-compose.yml      ← Local Postgres+pgvector
@@ -137,6 +138,7 @@ governedmemory/
 ├── pyproject.toml              ← Package metadata + ruff config
 ├── requirements-core.txt       ← Runtime deps
 ├── requirements-embed-local.txt ← sentence-transformers (optional)
+├── requirements-frontend.txt   ← Streamlit (optional)
 └── requirements-dev.txt        ← Test + lint deps
 ```
 
@@ -213,7 +215,7 @@ These spin up a real Postgres+pgvector container via testcontainers (Docker requ
 These tests verify the E1 definition of done:
 - Write + read a record end-to-end
 - Tenant isolation (cross-tenant reads return None)
-- Migration idempotency (running twice is safe)
+- `init_db()` idempotency (running it twice is safe)
 - Hash-chained audit log correctness
 
 ### Full suite with coverage
@@ -297,28 +299,26 @@ class BedrockEmbeddingProvider(EmbeddingProvider):
         return self._dims
 ```
 
-> **Note:** If your provider outputs a different number of dimensions than the current Postgres column (`vector(768)`), you must create a new migration to change the column type. See [Adding a Migration](#adding-a-migration).
+> **Note:** If your provider outputs a different number of dimensions than the current Postgres column (`vector(768)`), you must change the schema too. See [Changing the schema](#changing-the-schema).
 
-### Adding a migration
+### Changing the schema
 
-1. Create `core/memory_store/migrations/002_your_change.sql`
-2. Number files sequentially: `001`, `002`, `003`, ...
-3. Write idempotent SQL (`IF NOT EXISTS`, `CREATE OR REPLACE`, etc.)
-4. Run `python -m core.memory_store.migrate` to apply locally
-5. Commit the `.sql` file in the same PR as the code that needs it
+There's no separate migration system — the full schema lives in `_SCHEMA_SQL` in `core/memory_store/store.py`, and `init_db()` applies it idempotently (every statement uses `IF NOT EXISTS` / equivalent).
 
-**Never edit an existing migration file.** If a migration has been applied to any environment, it cannot be changed — add a new one instead.
+1. Edit `_SCHEMA_SQL` directly — e.g. add a column, change a type, add an index
+2. Keep every statement idempotent: `CREATE TABLE IF NOT EXISTS`, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, `DROP INDEX IF EXISTS` before recreating, etc.
+3. Run `init_db(dsn)` locally to apply it (safe to call repeatedly — see `tests/integration/test_memory_store.py::TestMigrations::test_init_db_is_idempotent`)
+4. If you change an existing column's type on data that might already exist in a deployed environment, note that in your PR description — `IF NOT EXISTS` guards additions, not type changes, so those need a deliberate rollout plan.
 
 ### Implementing an epic
 
-Each epic in the engineering plan maps to a new subdirectory under `core/`. Before starting:
+Each epic maps to a new subdirectory under `core/` (see the roadmap in [Project Structure](#project-structure) and the epic table in `README.md`). Before starting:
 
-1. Read the relevant section of `Metaworkers_Detailed_Engineering_Plan.md`
-2. Open a GitHub issue and describe your approach (get a quick review before writing code)
-3. Create your directory with an `__init__.py`
-4. Write tests first (unit tests for logic, integration tests for DB interactions)
-5. Implement the feature
-6. Update `CONTRIBUTING.md` if you add new setup steps
+1. Open a GitHub issue describing your approach (get a quick review before writing code)
+2. Create your directory with an `__init__.py`
+3. Write tests first (unit tests for logic, integration tests for DB interactions)
+4. Implement the feature
+5. Update `CONTRIBUTING.md` if you add new setup steps
 
 ---
 
@@ -356,14 +356,14 @@ One database for structured queries, full-text search, vector search, and the ap
 - Easier self-hosting for OSS users (one Docker image, not two)
 - Works on every major cloud's managed Postgres
 
-### Why raw SQL migrations (not Alembic)
+### Why one idempotent schema file (not Alembic, not numbered migrations)
 
-Alembic adds complexity that slows down onboarding. Plain `.sql` files are:
-- Readable by anyone (no Python ORM knowledge needed)
-- Runnable manually (`psql < 001_init.sql`) for debugging
-- Diffable in code review (you see exactly what changes)
+Both Alembic and a numbered-migrations directory add ceremony that this stage of the project doesn't need yet. Instead, the entire schema lives in one `_SCHEMA_SQL` string in `store.py`, applied by `init_db()`, with every statement written as `IF NOT EXISTS` / equivalent so it's always safe to run again. This is:
+- Readable by anyone (no Python ORM knowledge needed, no migration history to trace through)
+- Runnable manually (copy `_SCHEMA_SQL` into `psql`) for debugging
+- Diffable in code review (the schema change is the diff, not a new file)
 
-The trade-off is no auto-generation of migrations from model changes. Always write them by hand.
+The trade-off is that it doesn't handle destructive/lossy changes (dropping a column, changing a type on live data) automatically — those need a deliberate rollout plan, called out in the PR. If this project reaches a point where many contributors are shipping schema changes concurrently, revisit this decision and consider numbered migrations or Alembic.
 
 ### Why sync psycopg2 (not async asyncpg) for E1
 
@@ -399,20 +399,15 @@ Postgres is not ready yet. Wait 5–10 seconds after `docker compose up -d`.
 You're not using the `pgvector/pgvector:pg16` Docker image. This image has pgvector pre-installed. Other Postgres images don't. Don't change the image in `docker-compose.yml`.
 
 **"I changed a model field but tests still pass with the old value"**
-Pydantic v2 ignores extra fields by default. Check that your migration adds the new column and that `_row_to_record()` in `store.py` reads it.
+Pydantic v2 ignores extra fields by default. Check that `_SCHEMA_SQL` adds the new column and that `_row_to_record()` in `store.py` reads it.
 
 **"ivfflat index warning about too few rows"**
 Normal in development. The ivfflat index needs at least `lists * 3` rows to be effective (lists=100 → 300 rows). Vector search still works — it just does a sequential scan. This is fine for dev; production datasets won't have this issue.
 
 **"I want to use a different embedding model with 384 dimensions"**
 1. Change `SentenceTransformerProvider("all-MiniLM-L6-v2")` in your code
-2. Create `core/memory_store/migrations/002_change_embedding_dim.sql`:
-   ```sql
-   ALTER TABLE memory ALTER COLUMN embedding TYPE vector(384);
-   DROP INDEX IF EXISTS idx_memory_embedding;
-   CREATE INDEX idx_memory_embedding ON memory USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
-   ```
-3. Run `python -m core.memory_store.migrate`
+2. Update the `vector(768)` column type in `_SCHEMA_SQL` (in `core/memory_store/store.py`) to `vector(384)`, and rebuild the ivfflat index to match
+3. Run `init_db(dsn)` again — for a fresh local DB this is enough; for an environment with existing 768-dim data, you'll need to re-embed and backfill, since `ALTER COLUMN TYPE` isn't safe to run blindly against live vectors of a different dimension
 
 **"I'm on Windows and `make` doesn't work"**
 Use Git Bash or WSL. Or run the commands inside each Makefile target directly in PowerShell.
@@ -426,8 +421,8 @@ Before opening a PR, verify all of the following:
 - [ ] `pytest tests/unit/ -v` passes
 - [ ] `pytest tests/integration/ -v` passes (Docker must be running)
 - [ ] `ruff check core/ tests/` reports no errors
-- [ ] If you added a new model field: `_row_to_record()` in `store.py` reads it AND a migration adds the column
-- [ ] If you added a new migration: it is idempotent (safe to run twice)
+- [ ] If you added a new model field: `_row_to_record()` in `store.py` reads it AND `_SCHEMA_SQL` adds the column
+- [ ] If you changed `_SCHEMA_SQL`: every new statement is idempotent (`init_db()` must be safe to run twice)
 - [ ] If you added a new embedding provider: it has a unit test
 - [ ] Every new store method calls `_require_tenant(tenant_id)` as its first line
 - [ ] The tenant isolation tests in `TestTenantIsolation` still pass

@@ -13,3 +13,4 @@ build/
 .coverage
 htmlcov/
 *.pth
+.claude/settings.local.json

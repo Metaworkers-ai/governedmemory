@@ -4,6 +4,8 @@ A governed memory layer for enterprise AI agents. Every memory record carries pr
 
 **Current status:** E1 complete — core data models and Postgres+pgvector store with tenant isolation and audit log. No HTTP API yet (that's E7).
 
+Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for setup and how to pick up an epic, [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community guidelines, and [SECURITY.md](SECURITY.md) to report a vulnerability.
+
 ---
 
 ## What's in E1
@@ -526,10 +528,16 @@ governedmemory/
 │   └── .env.example
 ├── frontend/
 │   └── app.py              ← Streamlit UI — try E1 end-to-end in a browser
+├── scripts/
+│   ├── demo_data.py        ← Shared demo dataset (one tenant, five customers, 50 memories)
+│   ├── seed_demo.py        ← Populate the demo tenant
+│   └── categorize_demo.py  ← Readiness report before a live demo
 ├── tests/
 │   ├── unit/               ← 28 tests, no Docker
 │   └── integration/        ← 21 tests, needs Docker
 ├── CONTRIBUTING.md
+├── CODE_OF_CONDUCT.md
+├── SECURITY.md
 ├── requirements-core.txt
 ├── requirements-embed-local.txt
 ├── requirements-frontend.txt
