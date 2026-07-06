@@ -1,0 +1,33 @@
+version: "3.9"
+
+# Local development stack — Postgres with pgvector extension pre-installed.
+#
+# This is cloud-agnostic: the same DATABASE_URL format works on AWS RDS,
+# GCP Cloud SQL, Azure Postgres, Supabase, Neon, etc.
+# Only this docker-compose file is environment-specific.
+#
+# Start:   docker compose -f deploy/docker-compose.yml up -d
+# Stop:    docker compose -f deploy/docker-compose.yml down
+# Reset:   docker compose -f deploy/docker-compose.yml down -v   (deletes data)
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16          # official image with pgvector pre-installed
+    environment:
+      POSTGRES_DB: governedmemory
+      POSTGRES_USER: mw
+      POSTGRES_PASSWORD: mw_dev_password   # override in production via secrets manager
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mw -d governedmemory"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+    driver: local

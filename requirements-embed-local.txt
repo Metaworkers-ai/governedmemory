@@ -1,0 +1,8 @@
+# Optional: local embedding without any API key (runs on CPU or GPU)
+# Model download: ~420 MB for all-mpnet-base-v2 (768-dim, default)
+#                  ~80 MB for all-MiniLM-L6-v2 (384-dim, faster)
+#
+# Install: pip install -r requirements-embed-local.txt
+# Usage:   from core.memory_store.embeddings import SentenceTransformerProvider
+sentence-transformers>=3.0.0
+torch>=2.0.0              # CPU-only: pip install torch --index-url https://download.pytorch.org/whl/cpu

@@ -1,0 +1,7 @@
+# Development + testing dependencies
+-r requirements-core.txt
+
+pytest>=8.0
+pytest-cov>=5.0
+testcontainers[postgres]>=4.7   # spins up Docker Postgres for integration tests
+ruff>=0.6.0                     # linter + formatter
