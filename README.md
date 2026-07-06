@@ -4,7 +4,7 @@
 
 A governed memory layer for enterprise AI agents. Every memory record carries provenance, trust labels, purpose bindings, and a tamper-evident audit trail. Agents read only what they're allowed to read.
 
-**Current status:** E1 complete — core data models and Postgres+pgvector store with tenant isolation and audit log. No HTTP API yet (that's E7).
+**Current status:** E1 + E2 complete — core data models, Postgres+pgvector store, and a Write Governor pipeline (injection scanning + dedup) sit in front of every write. No HTTP API yet (that's E7).
 
 Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for setup and how to pick up an epic, [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community guidelines, and [SECURITY.md](SECURITY.md) to report a vulnerability.
 
@@ -24,6 +24,19 @@ The core governed-memory engine here is open source (Apache 2.0) — self-host i
 | Memory store | `core/memory_store/store.py` | Write, read, search, quarantine, delete — all tenant-scoped |
 | Embeddings | `core/memory_store/embeddings.py` | Pluggable interface — local (sentence-transformers), OpenAI, Cohere, or null (for tests) |
 | Schema | `init_db()` in `store.py` | Creates Postgres tables + pgvector indexes — safe to call multiple times |
+
+---
+
+## What's in E2
+
+The Write Governor sits inside `MemoryStore.write()` — every memory goes through the same pipeline, regardless of caller: **provenance → taint → injection scan → dedup → embed → persist**.
+
+| Component | File | What it does |
+|---|---|---|
+| Injection scanner | `core/write_governor/injection_scanner.py` | Heuristic, rule-based scorer (0–1) for prompt-injection patterns — fake system directives, instruction overrides, credential exfiltration. Runs on every write, not just untrusted-sourced ones, so an attack that sneaks into a nominally trusted channel still gets flagged. Combines multiple pattern matches via noisy-OR rather than max. |
+| Dedup | `core/write_governor/dedup.py` | Exact-duplicate detection (whitespace/case-normalized) scoped to tenant+customer. A resubmission of the same fact supersedes the prior record (`temporal.superseded_by`) and bumps `version` — search methods already filtered `superseded_by IS NULL`, so old versions quietly stop being retrieved without being deleted. |
+
+`INJECTION_THRESHOLD` (env var, default `0.7`) controls how high the scanner's score must go before a write gets tainted `untrusted` purely on content, independent of `source_type`. This is a heuristic stopgap — E5 replaces it with a real classifier that tracks precision/recall.
 
 ---
 
@@ -528,21 +541,24 @@ governedmemory/
 │   │   ├── memory_record.py
 │   │   ├── audit_event.py
 │   │   └── policy.py
-│   └── memory_store/       ← Storage layer
-│       ├── store.py        ← init_db() + MemoryStore
-│       └── embeddings.py   ← Pluggable embedding providers
+│   ├── memory_store/       ← Storage layer
+│   │   ├── store.py        ← init_db() + MemoryStore (calls the Write Governor on every write)
+│   │   └── embeddings.py   ← Pluggable embedding providers
+│   └── write_governor/     ← Write Governor (E2)
+│       ├── injection_scanner.py  ← Heuristic prompt-injection scorer
+│       └── dedup.py              ← Exact-duplicate detection + supersede
 ├── deploy/
 │   ├── docker-compose.yml  ← Local Postgres+pgvector
 │   └── .env.example
 ├── frontend/
-│   └── app.py              ← Streamlit UI — try E1 end-to-end in a browser
+│   └── app.py              ← Streamlit UI — try the store end-to-end in a browser
 ├── scripts/
 │   ├── demo_data.py        ← Shared demo dataset (one tenant, five customers, 50 memories)
 │   ├── seed_demo.py        ← Populate the demo tenant
 │   └── categorize_demo.py  ← Readiness report before a live demo
 ├── tests/
-│   ├── unit/               ← 28 tests, no Docker
-│   └── integration/        ← 21 tests, needs Docker
+│   ├── unit/               ← 46 tests, no Docker
+│   └── integration/        ← 27 tests, needs Docker
 ├── CONTRIBUTING.md
 ├── CODE_OF_CONDUCT.md
 ├── SECURITY.md
@@ -569,11 +585,10 @@ governedmemory/
 
 ---
 
-## What's next (E2–E7)
+## What's next (E3–E7)
 
 | Epic | What it adds |
 |---|---|
-| E2 | Write Governor — injection scanner, dedup, embedding on write |
 | E3 | Retrieval Engine — hybrid vector+lexical search, privilege gate |
 | E4 | Policy Engine — purpose-binding evaluator |
 | E5 | Detection — injection classifier (precision/recall tracked) |

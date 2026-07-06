@@ -31,6 +31,7 @@ from core.models.memory_record import (
 )
 from core.models.audit_event import AuditActor, AuditDecision, AuditOp, AuditOutcome
 from core.memory_store.embeddings import EmbeddingProvider
+from core.write_governor import scan_for_injection, find_duplicate
 
 _UNTRUSTED_SOURCE_TYPES = {SourceType.UNTRUSTED_WEB, SourceType.UNTRUSTED_EMAIL}
 _INJECTION_THRESHOLD = float(os.getenv("INJECTION_THRESHOLD", "0.7"))
@@ -187,37 +188,55 @@ class MemoryStore:
 
     def write(self, req: WriteRequest) -> MemoryRecord:
         """
-        Persist a new memory through the Write Governor pipeline (E1 stub).
-        E2 will wire in real injection detection and dedup.
+        Persist a new memory through the Write Governor pipeline (E2):
+        provenance -> taint -> injection scan -> dedup -> embed -> persist.
         """
         _require_tenant(req.tenant_id)
 
+        injection_score, injection_labels = scan_for_injection(req.content)
+        source_untrusted = req.provenance.source_type in _UNTRUSTED_SOURCE_TYPES
+        injection_flagged = injection_score >= _INJECTION_THRESHOLD
+
+        if source_untrusted or injection_flagged:
+            reasons = []
+            if source_untrusted:
+                reasons.append(f"source_type={req.provenance.source_type.value}")
+            if injection_flagged:
+                reasons.append(f"injection_score={injection_score:.2f} ({'/'.join(injection_labels)})")
+            trust = Trust(taint=Taint.UNTRUSTED, taint_reason="; ".join(reasons),
+                          injection_score=injection_score)
+        else:
+            trust = Trust(taint=Taint.TRUSTED, injection_score=injection_score)
+
         embedding = self._embedder.embed(req.content)
 
-        # Taint labeling: auto-untrusted for web/email sources (E5 adds real classifier)
-        injection_score = 0.0
-        auto_taint = req.provenance.source_type in _UNTRUSTED_SOURCE_TYPES
-        trust = Trust(
-            taint=Taint.UNTRUSTED if auto_taint else Taint.TRUSTED,
-            taint_reason=f"source_type={req.provenance.source_type.value}" if auto_taint else None,
-            injection_score=injection_score,
-        )
-
-        record = MemoryRecord(
-            tenant_id=req.tenant_id,
-            customer_id=req.customer_id,
-            agent_id=req.agent_id,
-            session_id=req.session_id,
-            content=req.content,
-            provenance=req.provenance,
-            trust=trust,
-            purpose=req.purpose,
-            temporal=req.temporal,
-            access=req.access,
-        )
-
         with self._conn() as conn:
-            with conn.cursor() as cur:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                # Dedup: does this customer already have this exact (normalized) content?
+                cur.execute(
+                    """SELECT id, content, version, superseded_by FROM memory
+                       WHERE tenant_id = %s AND customer_id = %s AND superseded_by IS NULL
+                       ORDER BY created_at DESC""",
+                    (req.tenant_id, req.customer_id),
+                )
+                duplicate = find_duplicate(cur.fetchall(), req.content)
+
+                temporal = req.temporal.model_copy(
+                    update={"version": duplicate["version"] + 1} if duplicate else {}
+                )
+                record = MemoryRecord(
+                    tenant_id=req.tenant_id,
+                    customer_id=req.customer_id,
+                    agent_id=req.agent_id,
+                    session_id=req.session_id,
+                    content=req.content,
+                    provenance=req.provenance,
+                    trust=trust,
+                    purpose=req.purpose,
+                    temporal=temporal,
+                    access=req.access,
+                )
+
                 cur.execute(
                     """
                     INSERT INTO memory (
@@ -252,9 +271,18 @@ class MemoryStore:
                     ),
                 )
 
+                if duplicate:
+                    cur.execute(
+                        "UPDATE memory SET superseded_by = %s WHERE id = %s",
+                        (record.id, duplicate["id"]),
+                    )
+
+        reason = "write accepted"
+        if duplicate:
+            reason += f"; supersedes {duplicate['id']}"
         self._audit(record.tenant_id, record.agent_id, record.session_id,
                     AuditOp.WRITE, [record.id],
-                    AuditDecision(outcome=AuditOutcome.ALLOW, reason="write accepted",
+                    AuditDecision(outcome=AuditOutcome.ALLOW, reason=reason,
                                   policy_id=record.purpose.policy_id))
         return record
 

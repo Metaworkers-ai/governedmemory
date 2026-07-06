@@ -114,9 +114,12 @@ governedmemory/
 │   │   ├── memory_record.py    ← MemoryRecord, WriteRequest, Provenance, Trust, ...
 │   │   ├── audit_event.py      ← AuditEvent (append-only, hash-chained)
 │   │   └── policy.py           ← Policy, PurposeBinding, PrivilegeRules
-│   └── memory_store/           ← Storage layer (E1)
-│       ├── store.py            ← MemoryStore class + init_db() + schema (_SCHEMA_SQL)
-│       └── embeddings.py       ← EmbeddingProvider ABC + pluggable implementations
+│   ├── memory_store/           ← Storage layer (E1)
+│   │   ├── store.py            ← MemoryStore class + init_db() + schema (_SCHEMA_SQL)
+│   │   └── embeddings.py       ← EmbeddingProvider ABC + pluggable implementations
+│   └── write_governor/         ← Write Governor (E2) — runs inside every MemoryStore.write()
+│       ├── injection_scanner.py ← Heuristic, rule-based prompt-injection scorer
+│       └── dedup.py             ← Exact-duplicate detection + version supersession
 │
 ├── frontend/
 │   └── app.py                  ← Streamlit UI — try the store end-to-end in a browser
@@ -147,7 +150,6 @@ governedmemory/
 
 ```
 core/
-├── write_governor/             ← E2: provenance→taint→dedup→embed pipeline
 ├── retrieval_engine/           ← E3: hybrid vector+lexical search + privilege gate
 ├── policy_engine/              ← E4: policy evaluator (OPA-ready)
 ├── detection/                  ← E5: injection scanner + taint classifier
