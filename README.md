@@ -4,7 +4,7 @@
 
 A governed memory layer for enterprise AI agents. Every memory record carries provenance, trust labels, purpose bindings, and a tamper-evident audit trail. Agents read only what they're allowed to read.
 
-**Current status:** E1 + E2 complete — core data models, Postgres+pgvector store, and a Write Governor pipeline (injection scanning + dedup) sit in front of every write. No HTTP API yet (that's E7).
+**Current status:** E1 + E2 + E3 complete — core data models, Postgres+pgvector store, a Write Governor pipeline (injection scanning + dedup), and a governed Retrieval Engine (hybrid search + a real privilege gate) sit in front of every write and every read. No HTTP API yet (that's E7).
 
 Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for setup and how to pick up an epic, [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community guidelines, and [SECURITY.md](SECURITY.md) to report a vulnerability.
 
@@ -37,6 +37,20 @@ The Write Governor sits inside `MemoryStore.write()` — every memory goes throu
 | Dedup | `core/write_governor/dedup.py` | Exact-duplicate detection (whitespace/case-normalized) scoped to tenant+customer. A resubmission of the same fact supersedes the prior record (`temporal.superseded_by`) and bumps `version` — search methods already filtered `superseded_by IS NULL`, so old versions quietly stop being retrieved without being deleted. |
 
 `INJECTION_THRESHOLD` (env var, default `0.7`) controls how high the scanner's score must go before a write gets tainted `untrusted` purely on content, independent of `source_type`. This is a heuristic stopgap — E5 replaces it with a real classifier that tracks precision/recall.
+
+---
+
+## What's in E3
+
+Before E3, `quarantine()` claimed a quarantined record was "blocked by the privilege gate on retrieval" — but no gate existed. `vector_search()`/`lexical_search()` returned untrusted and quarantined records exactly like trusted ones, `allowed_purposes` was stored but never checked, and `AuditOp.RETRIEVE` was defined but never emitted. E3 closes all three gaps with one new entry point: `MemoryStore.retrieve()`.
+
+| Component | File | What it does |
+|---|---|---|
+| Fusion | `core/retrieval_engine/fusion.py` | Reciprocal rank fusion — combines vector + lexical result rankings into one, without needing to normalize incompatible score scales (cosine distance vs. `ts_rank`) |
+| Privilege gate | `core/retrieval_engine/privilege_gate.py` | Excludes `untrusted`/`quarantined` records by default (opt-out via `include_untrusted=True`, e.g. for a governance dashboard) and enforces purpose binding — a record with a non-empty `allowed_purposes` is only returned when the caller's declared `purpose` is in that list |
+| Governed retrieval | `MemoryStore.retrieve()` in `store.py` | The entry point agents should use — fuses vector+lexical, over-fetches before gating so filtering doesn't starve results, applies the privilege gate, and emits an `AuditOp.RETRIEVE` event either way |
+
+`vector_search()`/`lexical_search()` remain as raw, ungated primitives — useful for debugging or direct inspection, but they don't apply the privilege gate or audit anything. Both are still called internally by `retrieve()`.
 
 ---
 
@@ -173,7 +187,7 @@ Opens at `http://localhost:8501`. Tabs:
 |---|---|
 | Write | Write a memory with provenance (source type, confidence, purpose) |
 | Browse | List memories for a customer, expand to see full record |
-| Search | Vector (semantic) and lexical (full-text) search side by side |
+| Search | Governed `retrieve()` (fused + privilege-gated) vs. raw `vector_search()`/`lexical_search()` side by side — shows exactly what the privilege gate excludes |
 | Governance | Quarantine or delete a memory |
 | Tenant Isolation | Write as tenant A, prove tenant B cannot read it |
 | Audit Log | View the hash-chained audit trail — each event's `prev_hash` matches the prior event's `hash` |
@@ -542,11 +556,14 @@ governedmemory/
 │   │   ├── audit_event.py
 │   │   └── policy.py
 │   ├── memory_store/       ← Storage layer
-│   │   ├── store.py        ← init_db() + MemoryStore (calls the Write Governor on every write)
+│   │   ├── store.py        ← init_db() + MemoryStore (write/retrieve call the Write/Retrieval Governors)
 │   │   └── embeddings.py   ← Pluggable embedding providers
-│   └── write_governor/     ← Write Governor (E2)
-│       ├── injection_scanner.py  ← Heuristic prompt-injection scorer
-│       └── dedup.py              ← Exact-duplicate detection + supersede
+│   ├── write_governor/     ← Write Governor (E2)
+│   │   ├── injection_scanner.py  ← Heuristic prompt-injection scorer
+│   │   └── dedup.py              ← Exact-duplicate detection + supersede
+│   └── retrieval_engine/   ← Retrieval Engine (E3)
+│       ├── fusion.py             ← Reciprocal rank fusion (vector + lexical)
+│       └── privilege_gate.py     ← Taint + purpose-binding enforcement on read
 ├── deploy/
 │   ├── docker-compose.yml  ← Local Postgres+pgvector
 │   └── .env.example
@@ -557,8 +574,8 @@ governedmemory/
 │   ├── seed_demo.py        ← Populate the demo tenant
 │   └── categorize_demo.py  ← Readiness report before a live demo
 ├── tests/
-│   ├── unit/               ← 46 tests, no Docker
-│   └── integration/        ← 27 tests, needs Docker
+│   ├── unit/               ← 61 tests, no Docker
+│   └── integration/        ← 33 tests, needs Docker
 ├── CONTRIBUTING.md
 ├── CODE_OF_CONDUCT.md
 ├── SECURITY.md
@@ -585,11 +602,10 @@ governedmemory/
 
 ---
 
-## What's next (E3–E7)
+## What's next (E4–E7)
 
 | Epic | What it adds |
 |---|---|
-| E3 | Retrieval Engine — hybrid vector+lexical search, privilege gate |
 | E4 | Policy Engine — purpose-binding evaluator |
 | E5 | Detection — injection classifier (precision/recall tracked) |
 | E6 | Audit Graph — cascade purge, provenance tree, hash-chain verifier |

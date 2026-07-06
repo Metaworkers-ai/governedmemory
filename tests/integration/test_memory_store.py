@@ -27,7 +27,7 @@ except Exception:
     pass
 
 from core.memory_store import MemoryStore, init_db, NullEmbeddingProvider
-from core.models import WriteRequest, Provenance, SourceType, Taint
+from core.models import WriteRequest, Provenance, Purpose, SourceType, Taint
 
 POSTGRES_IMAGE = "pgvector/pgvector:pg16"  # official image with pgvector pre-installed
 
@@ -79,7 +79,7 @@ def migrated_dsn(postgres_dsn):
 # ============================================================
 
 def _req(tenant_id: str, customer_id: str = "cust-001", content: str = "test memory",
-         source_type: SourceType = SourceType.USER) -> WriteRequest:
+         source_type: SourceType = SourceType.USER, allowed_purposes: list = None) -> WriteRequest:
     return WriteRequest(
         tenant_id=tenant_id,
         customer_id=customer_id,
@@ -87,6 +87,7 @@ def _req(tenant_id: str, customer_id: str = "cust-001", content: str = "test mem
         session_id="test-session",
         content=content,
         provenance=Provenance(source_type=source_type, source_ref="test-ref", confidence=0.9),
+        purpose=Purpose(allowed_purposes=allowed_purposes or []),
     )
 
 
@@ -400,3 +401,83 @@ class TestVectorSearch:
 
         results_a = migrated_store.vector_search("private", "tenant-vec-a", k=10)
         assert all(r.tenant_id == "tenant-vec-a" for r in results_a)
+
+
+# ============================================================
+# E3 Definition of Done: Retrieval Engine (hybrid search + privilege gate)
+# ============================================================
+
+class TestRetrievalEngine:
+    def test_retrieve_excludes_untrusted_by_default(self, migrated_store):
+        tenant = "tenant-e3-untrusted"
+        migrated_store.write(_req(tenant, customer_id="cust-1", content="trusted refund policy note",
+                                   source_type=SourceType.TRUSTED_SYSTEM))
+        migrated_store.write(_req(tenant, customer_id="cust-1", content="untrusted refund policy note",
+                                   source_type=SourceType.UNTRUSTED_EMAIL))
+
+        results = migrated_store.retrieve("refund policy", tenant, "agent-1", "sess-1", k=10)
+        assert all(r.trust.taint == Taint.TRUSTED for r in results)
+        assert any("trusted refund" in r.content for r in results)
+        assert not any("untrusted refund" in r.content for r in results)
+
+    def test_retrieve_includes_untrusted_when_requested(self, migrated_store):
+        tenant = "tenant-e3-include-untrusted"
+        migrated_store.write(_req(tenant, customer_id="cust-1", content="shared topic alpha",
+                                   source_type=SourceType.UNTRUSTED_WEB))
+
+        gated = migrated_store.retrieve("topic alpha", tenant, "agent-1", "sess-1", k=10)
+        ungated = migrated_store.retrieve("topic alpha", tenant, "agent-1", "sess-1", k=10,
+                                           include_untrusted=True)
+        assert len(gated) == 0
+        assert len(ungated) == 1
+
+    def test_retrieve_excludes_quarantined(self, migrated_store):
+        tenant = "tenant-e3-quarantine"
+        record = migrated_store.write(_req(tenant, customer_id="cust-1", content="quarantine topic note"))
+        migrated_store.quarantine(record.id, tenant, reason="test quarantine")
+
+        results = migrated_store.retrieve("quarantine topic", tenant, "agent-1", "sess-1", k=10)
+        assert record.id not in [r.id for r in results]
+
+    def test_retrieve_purpose_filtering(self, migrated_store):
+        tenant = "tenant-e3-purpose"
+        migrated_store.write(_req(tenant, customer_id="cust-1", content="billing purpose note",
+                                   allowed_purposes=["billing"]))
+        migrated_store.write(_req(tenant, customer_id="cust-1", content="open purpose note",
+                                   allowed_purposes=[]))
+
+        billing_view = migrated_store.retrieve("purpose note", tenant, "agent-1", "sess-1",
+                                                 purpose="billing", k=10)
+        sales_view = migrated_store.retrieve("purpose note", tenant, "agent-1", "sess-1",
+                                              purpose="sales", k=10)
+
+        billing_contents = [r.content for r in billing_view]
+        sales_contents = [r.content for r in sales_view]
+        assert "billing purpose note" in billing_contents
+        assert "open purpose note" in billing_contents
+        assert "billing purpose note" not in sales_contents
+        assert "open purpose note" in sales_contents  # empty allowed_purposes = open to any
+
+    def test_retrieve_respects_k_limit(self, migrated_store):
+        tenant = "tenant-e3-klimit"
+        for i in range(5):
+            migrated_store.write(_req(tenant, customer_id="cust-1", content=f"klimit note {i}"))
+        results = migrated_store.retrieve("klimit note", tenant, "agent-1", "sess-1", k=2)
+        assert len(results) <= 2
+
+    def test_retrieve_emits_audit_event(self, migrated_store, migrated_dsn):
+        import psycopg2
+        tenant = "tenant-e3-audit"
+        migrated_store.write(_req(tenant, customer_id="cust-1", content="audit retrieval note"))
+        migrated_store.retrieve("audit retrieval", tenant, "agent-1", "sess-1", k=5)
+
+        conn = psycopg2.connect(migrated_dsn)
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT op, outcome FROM audit WHERE tenant_id = %s AND op = 'retrieve' ORDER BY ts DESC LIMIT 1",
+                (tenant,),
+            )
+            row = cur.fetchone()
+        conn.close()
+        assert row is not None
+        assert row[0] == "retrieve"
