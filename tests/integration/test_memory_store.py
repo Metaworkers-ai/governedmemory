@@ -26,8 +26,17 @@ try:
 except Exception:
     pass
 
-from core.memory_store import MemoryStore, init_db, NullEmbeddingProvider
-from core.models import WriteRequest, Provenance, Purpose, SourceType, Taint
+from core.memory_store import MemoryStore, NullEmbeddingProvider, init_db
+from core.models import (
+    Policy,
+    PrivilegeRules,
+    Provenance,
+    Purpose,
+    PurposeBinding,
+    SourceType,
+    Taint,
+    WriteRequest,
+)
 
 POSTGRES_IMAGE = "pgvector/pgvector:pg16"  # official image with pgvector pre-installed
 
@@ -481,3 +490,101 @@ class TestRetrievalEngine:
         conn.close()
         assert row is not None
         assert row[0] == "retrieve"
+
+
+# ============================================================
+# E4 Definition of Done: Policy Engine (purpose-binding evaluator)
+# ============================================================
+
+class TestPolicyEngine:
+    def test_get_policy_returns_permissive_default_when_unconfigured(self, migrated_store):
+        policy = migrated_store.get_policy("tenant-e4-default", "default")
+        assert policy.purpose_bindings == []
+        assert policy.privilege_rules.privileged_actions == ["send_email", "refund", "escalate"]
+        assert policy.privilege_rules.require_trust is True
+
+    def test_upsert_and_get_policy_roundtrip(self, migrated_store):
+        tenant = "tenant-e4-roundtrip"
+        policy = Policy(
+            id="default", tenant_id=tenant,
+            purpose_bindings=[PurposeBinding(purpose="sales", allowed_source_types=["user"])],
+            privilege_rules=PrivilegeRules(privileged_actions=["refund"], require_trust=True),
+        )
+        migrated_store.upsert_policy(policy)
+
+        fetched = migrated_store.get_policy(tenant, "default")
+        assert len(fetched.purpose_bindings) == 1
+        assert fetched.purpose_bindings[0].purpose == "sales"
+        assert fetched.purpose_bindings[0].allowed_source_types == ["user"]
+        assert fetched.privilege_rules.privileged_actions == ["refund"]
+
+    def test_upsert_policy_is_idempotent_update(self, migrated_store):
+        tenant = "tenant-e4-update"
+        migrated_store.upsert_policy(Policy(
+            id="default", tenant_id=tenant,
+            purpose_bindings=[PurposeBinding(purpose="sales", allowed_source_types=["user"])],
+        ))
+        migrated_store.upsert_policy(Policy(
+            id="default", tenant_id=tenant,
+            purpose_bindings=[PurposeBinding(purpose="sales", allowed_source_types=["trusted_system"])],
+        ))
+        fetched = migrated_store.get_policy(tenant, "default")
+        assert len(fetched.purpose_bindings) == 1
+        assert fetched.purpose_bindings[0].allowed_source_types == ["trusted_system"]
+
+    def test_retrieve_respects_configured_purpose_binding(self, migrated_store):
+        tenant = "tenant-e4-retrieve-binding"
+        migrated_store.upsert_policy(Policy(
+            id="default", tenant_id=tenant,
+            purpose_bindings=[PurposeBinding(purpose="sales", allowed_source_types=["user"])],
+        ))
+        migrated_store.write(_req(tenant, customer_id="cust-1", content="sales note from a user",
+                                   source_type=SourceType.USER))
+        migrated_store.write(_req(tenant, customer_id="cust-1", content="sales note from an agent summary",
+                                   source_type=SourceType.AGENT_DERIVED))
+
+        results = migrated_store.retrieve("sales note", tenant, "agent-1", "sess-1",
+                                           purpose="sales", k=10)
+        contents = [r.content for r in results]
+        assert "sales note from a user" in contents
+        assert "sales note from an agent summary" not in contents
+
+    def test_check_privilege_denies_untrusted_by_default(self, migrated_store):
+        tenant = "tenant-e4-privilege-deny"
+        record = migrated_store.write(_req(tenant, customer_id="cust-1", content="refund-worthy note",
+                                            source_type=SourceType.UNTRUSTED_EMAIL))
+        allowed = migrated_store.check_privilege(record.id, tenant, "refund", "agent-1", "sess-1")
+        assert allowed is False
+
+    def test_check_privilege_allows_trusted(self, migrated_store):
+        tenant = "tenant-e4-privilege-allow"
+        record = migrated_store.write(_req(tenant, customer_id="cust-1", content="trusted refund note",
+                                            source_type=SourceType.TRUSTED_SYSTEM))
+        allowed = migrated_store.check_privilege(record.id, tenant, "refund", "agent-1", "sess-1")
+        assert allowed is True
+
+    def test_check_privilege_allows_non_privileged_action_even_if_untrusted(self, migrated_store):
+        tenant = "tenant-e4-privilege-nonaction"
+        record = migrated_store.write(_req(tenant, customer_id="cust-1", content="just a read",
+                                            source_type=SourceType.UNTRUSTED_WEB))
+        allowed = migrated_store.check_privilege(record.id, tenant, "read", "agent-1", "sess-1")
+        assert allowed is True
+
+    def test_check_privilege_emits_audit_event(self, migrated_store, migrated_dsn):
+        import psycopg2
+        tenant = "tenant-e4-privilege-audit"
+        record = migrated_store.write(_req(tenant, customer_id="cust-1", content="audited refund note",
+                                            source_type=SourceType.UNTRUSTED_EMAIL))
+        migrated_store.check_privilege(record.id, tenant, "refund", "agent-1", "sess-1")
+
+        conn = psycopg2.connect(migrated_dsn)
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT op, outcome FROM audit WHERE tenant_id = %s AND op = 'policy_decision' ORDER BY ts DESC LIMIT 1",
+                (tenant,),
+            )
+            row = cur.fetchone()
+        conn.close()
+        assert row is not None
+        assert row[0] == "policy_decision"
+        assert row[1] == "deny"

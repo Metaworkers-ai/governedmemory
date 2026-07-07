@@ -18,8 +18,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from dotenv import load_dotenv
 
 from core.memory_store import MemoryStore, NullEmbeddingProvider, init_db
-from core.models import Provenance, Purpose, SourceType, Taint, WriteRequest
+from core.models import Provenance, Purpose, PurposeBinding, SourceType, Taint, WriteRequest
 from core.retrieval_engine import reciprocal_rank_fusion, apply_privilege_gate
+from core.policy_engine import evaluate_purpose_binding, filter_by_purpose_binding
 
 load_dotenv()
 
@@ -90,8 +91,8 @@ with st.sidebar:
         if stats["total_memories"] == 0:
             st.caption("No data yet — run `python scripts/seed_demo.py` to populate the demo.")
 
-tab_write, tab_browse, tab_search, tab_governance, tab_isolation, tab_audit = st.tabs(
-    ["Write", "Browse", "Search", "Governance", "Tenant Isolation", "Audit Log"]
+tab_write, tab_browse, tab_search, tab_governance, tab_policy, tab_isolation, tab_audit = st.tabs(
+    ["Write", "Browse", "Search", "Governance", "Policy", "Tenant Isolation", "Audit Log"]
 )
 
 # ---------------------------------------------------------------------------
@@ -248,9 +249,9 @@ with tab_search:
         include_untrusted = st.checkbox("Include untrusted/quarantined (bypass the privilege gate)")
 
     if query and tenant_id:
-        # Reconstruct retrieve()'s own fuse-then-gate pipeline here (using the same
-        # exported, pure functions it calls internally) so we can show exactly what
-        # the gate excluded and why — retrieve() itself only returns the survivors.
+        # Reconstruct retrieve()'s own fuse-then-gate-then-policy pipeline here (using
+        # the same exported, pure functions it calls internally) so we can show exactly
+        # what got excluded and why — retrieve() itself only returns the survivors.
         fetch_k = max(k * 3, 20)
         vector_results = store.vector_search(query, tenant_id, k=fetch_k)
         lexical_results = store.lexical_search(query, tenant_id, k=fetch_k)
@@ -259,34 +260,46 @@ with tab_search:
         ])
         by_id = {r.id: r for r in vector_results + lexical_results}
         ranked = [by_id[i] for i in sorted(fused_scores, key=fused_scores.get, reverse=True)]
-        full_gated = apply_privilege_gate(ranked, purpose=purpose_filter, include_untrusted=include_untrusted)
+        privilege_gated = apply_privilege_gate(ranked, purpose=purpose_filter, include_untrusted=include_untrusted)
+        full_gated = filter_by_purpose_binding(privilege_gated, purpose_filter,
+                                                lambda pid: store.get_policy(tenant_id, pid))
 
         gated_results = store.retrieve(query, tenant_id, agent_id, session_id,
                                         purpose=purpose_filter, k=k, include_untrusted=include_untrusted)
 
-        st.markdown("### `retrieve()` — governed hybrid search (E3)")
+        st.markdown("### `retrieve()` — governed hybrid search (E3 + E4)")
         st.caption("Reciprocal rank fusion over vector + lexical, then the privilege gate "
-                   "(taint + purpose). This is what agents should actually call.")
+                   "(taint + record-level purpose), then the policy engine's purpose-binding "
+                   "check (tenant-level source_type restriction per purpose). This is what "
+                   "agents should actually call.")
         if not gated_results:
             st.write("No results — try a broader query, a different purpose, or check the untrusted box.")
         for r in gated_results:
             taint_icon = {"trusted": "✅", "untrusted": "⚠️", "quarantined": "🚫"}[r.trust.taint.value]
-            st.write(f"- {taint_icon} {r.content[:100]}  `purposes={r.purpose.allowed_purposes or ['any']}`")
+            st.write(f"- {taint_icon} {r.content[:100]}  `purposes={r.purpose.allowed_purposes or ['any']}` "
+                     f"`source={r.provenance.source_type.value}`")
 
-        gated_ids = {r.id for r in full_gated}
+        privilege_gated_ids = {r.id for r in privilege_gated}
+        full_gated_ids = {r.id for r in full_gated}
         shown_ids = {r.id for r in gated_results}
-        excluded_by_gate = [r for r in ranked if r.id not in gated_ids]
+        excluded_by_privilege_gate = [r for r in ranked if r.id not in privilege_gated_ids]
+        excluded_by_policy = [r for r in privilege_gated if r.id not in full_gated_ids]
         cut_by_k = [r for r in full_gated if r.id not in shown_ids]
 
-        if excluded_by_gate or cut_by_k:
-            with st.expander(f"🔍 {len(excluded_by_gate) + len(cut_by_k)} candidate(s) not shown above — why"):
-                for r in excluded_by_gate:
+        total_excluded = len(excluded_by_privilege_gate) + len(excluded_by_policy) + len(cut_by_k)
+        if total_excluded:
+            with st.expander(f"🔍 {total_excluded} candidate(s) not shown above — why"):
+                for r in excluded_by_privilege_gate:
                     taint_icon = {"trusted": "✅", "untrusted": "⚠️", "quarantined": "🚫"}[r.trust.taint.value]
                     if r.trust.taint != Taint.TRUSTED and not include_untrusted:
                         reason = f"taint={r.trust.taint.value}"
                     else:
                         reason = f"purpose mismatch — needs one of {r.purpose.allowed_purposes}, not '{purpose_filter}'"
-                    st.write(f"- {taint_icon} {r.content[:80]} — **excluded by privilege gate** ({reason})")
+                    st.write(f"- {taint_icon} {r.content[:80]} — **excluded by privilege gate (E3)** ({reason})")
+                for r in excluded_by_policy:
+                    policy = store.get_policy(tenant_id, r.purpose.policy_id)
+                    _, reason = evaluate_purpose_binding(policy, purpose_filter, r.provenance.source_type.value)
+                    st.write(f"- {r.content[:80]} — **excluded by policy engine (E4)** ({reason})")
                 for r in cut_by_k:
                     st.write(f"- {r.content[:80]} — passed the gate but cut off by the k={k} result limit")
 
@@ -333,6 +346,59 @@ with tab_governance:
                 ok = store.delete(memory_id, tenant_id)
                 st.success("Deleted." if ok else "Failed.")
                 st.rerun()
+
+# ---------------------------------------------------------------------------
+# Policy (E4)
+# ---------------------------------------------------------------------------
+with tab_policy:
+    st.subheader("Policy Engine (E4)")
+    st.caption("A Policy document has existed since E1 (a table, a policy_id on every memory) — "
+               "but nothing ever read it until E4. This tab exercises the two things it now governs.")
+
+    if tenant_id:
+        policy = store.get_policy(tenant_id, "default")
+
+        st.markdown("#### Current policy — `default`")
+        if not policy.purpose_bindings:
+            st.write("No purpose bindings configured — every purpose defaults to allowing any source_type.")
+        else:
+            for b in policy.purpose_bindings:
+                st.write(f"- **{b.purpose}** → only source_type in `{b.allowed_source_types or 'any'}`")
+        st.write(f"Privileged actions: `{policy.privilege_rules.privileged_actions}` "
+                 f"(require_trust=`{policy.privilege_rules.require_trust}`)")
+
+        with st.expander("➕ Add a purpose binding"):
+            with st.form("add_binding_form"):
+                new_purpose = st.text_input("Purpose", placeholder="e.g. sales")
+                new_source_types = st.multiselect("Allowed source types (empty = any)",
+                                                    [s.value for s in SourceType])
+                if st.form_submit_button("Save binding"):
+                    updated_bindings = [b for b in policy.purpose_bindings if b.purpose != new_purpose]
+                    updated_bindings.append(PurposeBinding(purpose=new_purpose, allowed_source_types=new_source_types))
+                    policy.purpose_bindings = updated_bindings
+                    store.upsert_policy(policy)
+                    st.success(f"Saved binding for purpose '{new_purpose}'.")
+                    st.rerun()
+
+        st.divider()
+        st.markdown("#### Check a privileged action")
+        st.caption("Evaluates PrivilegeRules against one memory's current taint, and emits an "
+                   "AuditOp.POLICY_DECISION event either way.")
+        memories = store.list_for_customer(tenant_id, customer_id) if customer_id else []
+        if not memories:
+            st.write("No memories for this customer yet.")
+        else:
+            options = {f"{m.content[:60]} ({m.trust.taint.value})": m.id for m in memories}
+            choice = st.selectbox("Memory", list(options.keys()), key="policy_memory_choice")
+            action = st.selectbox("Action", ["refund", "send_email", "escalate", "read", "Other…"])
+            if action == "Other…":
+                action = st.text_input("Custom action") or "read"
+            if st.button("Check privilege", type="primary"):
+                allowed = store.check_privilege(options[choice], tenant_id, action, agent_id, session_id)
+                if allowed:
+                    st.success(f"✅ ALLOWED — '{action}' may be performed using this memory.")
+                else:
+                    st.error(f"🚫 DENIED — '{action}' may not be performed using this memory.")
 
 # ---------------------------------------------------------------------------
 # Tenant isolation demo

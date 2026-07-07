@@ -19,10 +19,19 @@ Story arc, useful for narrating a live demo:
 Five of the fifty memories carry an embedded prompt-injection attempt. All
 five arrive via untrusted_email or untrusted_web and are auto-tainted on
 write — before any agent ever reads them.
+
+DEMO_POLICY (E4) restricts the "sales" purpose to user/trusted_system
+source types — this excludes the two AI-agent-generated "sales agent
+summary" memories (David's and Fatima's) when retrieving for purpose=
+"sales", demonstrating that a policy can say "don't let an agent's own
+inference be the sole basis for a sales action" without touching the
+memories themselves. Everything else (retrieve() with no purpose filter,
+or with purpose="cx_support"/"billing"/"security"/"retention") is
+unaffected — this binding only applies to "sales".
 """
 from __future__ import annotations
 
-from core.models import SourceType
+from core.models import Policy, PurposeBinding, SourceType
 
 TENANT_ID = "solstice-cloud"
 
@@ -270,3 +279,13 @@ MEMORIES = [
 
 assert len(MEMORIES) == 50, f"expected 50 demo memories, got {len(MEMORIES)}"
 assert {m["customer_id"] for m in MEMORIES} == set(CUSTOMERS), "customer_id mismatch between MEMORIES and CUSTOMERS"
+
+# E4: a policy for the demo tenant's "default" policy_id (every seeded memory uses it).
+# See the module docstring above for what this demonstrates.
+DEMO_POLICY = Policy(
+    id="default",
+    tenant_id=TENANT_ID,
+    purpose_bindings=[
+        PurposeBinding(purpose="sales", allowed_source_types=["user", "trusted_system"]),
+    ],
+)

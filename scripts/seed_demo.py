@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 
 from core.memory_store import MemoryStore, NullEmbeddingProvider, init_db
 from core.models import Provenance, Purpose, Temporal, WriteRequest
-from scripts.demo_data import CUSTOMERS, MEMORIES, TENANT_ID
+from scripts.demo_data import CUSTOMERS, DEMO_POLICY, MEMORIES, TENANT_ID
 
 
 def get_embedder():
@@ -82,10 +82,14 @@ def main() -> None:
         record = store.write(req)
         taint_counts[record.trust.taint.value] += 1
 
+    store.upsert_policy(DEMO_POLICY)
+
     print(f"\nSeeded {len(MEMORIES)} memories for tenant '{TENANT_ID}' across {len(CUSTOMERS)} customers.")
     print(f"  trusted:     {taint_counts['trusted']}")
     print(f"  untrusted:   {taint_counts['untrusted']}  (auto-tainted — untrusted_email / untrusted_web sources)")
     print(f"  quarantined: {taint_counts['quarantined']}")
+    print("\nConfigured a policy (E4): purpose='sales' now only allows user/trusted_system source")
+    print("types — retrieve() with purpose='sales' will exclude the two agent-generated sales summaries.")
     print("\nRun scripts/categorize_demo.py for a full breakdown, or open the frontend:")
     print("  streamlit run frontend/app.py")
 
