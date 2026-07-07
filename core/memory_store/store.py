@@ -11,28 +11,36 @@ GETTING STARTED
     init_db(dsn)                              # create tables (safe to call multiple times)
     store = MemoryStore(dsn, SentenceTransformerProvider())
 """
+
 from __future__ import annotations
 
 import hashlib
 import json
 import os
 import uuid
+from collections.abc import Generator
 from contextlib import contextmanager
-from datetime import datetime, timezone
-from typing import Generator, List, Optional
+from datetime import UTC, datetime
 
 import psycopg2
 import psycopg2.extras
 from pgvector.psycopg2 import register_vector
 
-from core.models.memory_record import (
-    Access, MemoryRecord, Provenance, Purpose, SourceType,
-    Taint, Temporal, Trust, WriteRequest,
-)
-from core.models.audit_event import AuditActor, AuditDecision, AuditOp, AuditOutcome
 from core.memory_store.embeddings import EmbeddingProvider
-from core.write_governor import scan_for_injection, find_duplicate
-from core.retrieval_engine import reciprocal_rank_fusion, apply_privilege_gate
+from core.models.audit_event import AuditDecision, AuditOp, AuditOutcome
+from core.models.memory_record import (
+    Access,
+    MemoryRecord,
+    Provenance,
+    Purpose,
+    SourceType,
+    Taint,
+    Temporal,
+    Trust,
+    WriteRequest,
+)
+from core.retrieval_engine import apply_privilege_gate, reciprocal_rank_fusion
+from core.write_governor import find_duplicate, scan_for_injection
 
 _UNTRUSTED_SOURCE_TYPES = {SourceType.UNTRUSTED_WEB, SourceType.UNTRUSTED_EMAIL}
 _INJECTION_THRESHOLD = float(os.getenv("INJECTION_THRESHOLD", "0.7"))
@@ -150,6 +158,7 @@ def init_db(dsn: str) -> None:
 # Store
 # ---------------------------------------------------------------------------
 
+
 def _require_tenant(tenant_id: str) -> None:
     if not tenant_id or not tenant_id.strip():
         raise ValueError("tenant_id must not be empty — every operation is tenant-scoped")
@@ -203,9 +212,14 @@ class MemoryStore:
             if source_untrusted:
                 reasons.append(f"source_type={req.provenance.source_type.value}")
             if injection_flagged:
-                reasons.append(f"injection_score={injection_score:.2f} ({'/'.join(injection_labels)})")
-            trust = Trust(taint=Taint.UNTRUSTED, taint_reason="; ".join(reasons),
-                          injection_score=injection_score)
+                reasons.append(
+                    f"injection_score={injection_score:.2f} ({'/'.join(injection_labels)})"
+                )
+            trust = Trust(
+                taint=Taint.UNTRUSTED,
+                taint_reason="; ".join(reasons),
+                injection_score=injection_score,
+            )
         else:
             trust = Trust(taint=Taint.TRUSTED, injection_score=injection_score)
 
@@ -256,19 +270,30 @@ class MemoryStore:
                     )
                     """,
                     (
-                        record.id, record.tenant_id, record.customer_id,
-                        record.agent_id, record.session_id,
-                        record.content, embedding,
-                        record.provenance.source_type.value, record.provenance.source_ref,
-                        record.provenance.ingested_at, record.provenance.confidence,
+                        record.id,
+                        record.tenant_id,
+                        record.customer_id,
+                        record.agent_id,
+                        record.session_id,
+                        record.content,
+                        embedding,
+                        record.provenance.source_type.value,
+                        record.provenance.source_ref,
+                        record.provenance.ingested_at,
+                        record.provenance.confidence,
                         json.dumps(record.provenance.parent_ids),
-                        record.trust.taint.value, record.trust.taint_reason,
+                        record.trust.taint.value,
+                        record.trust.taint_reason,
                         record.trust.injection_score,
-                        json.dumps(record.purpose.allowed_purposes), record.purpose.policy_id,
-                        record.temporal.valid_from, record.temporal.valid_until,
-                        record.temporal.superseded_by, record.temporal.version,
+                        json.dumps(record.purpose.allowed_purposes),
+                        record.purpose.policy_id,
+                        record.temporal.valid_from,
+                        record.temporal.valid_until,
+                        record.temporal.superseded_by,
+                        record.temporal.version,
                         json.dumps(record.access.acl),
-                        record.created_at, record.updated_at,
+                        record.created_at,
+                        record.updated_at,
                     ),
                 )
 
@@ -281,17 +306,23 @@ class MemoryStore:
         reason = "write accepted"
         if duplicate:
             reason += f"; supersedes {duplicate['id']}"
-        self._audit(record.tenant_id, record.agent_id, record.session_id,
-                    AuditOp.WRITE, [record.id],
-                    AuditDecision(outcome=AuditOutcome.ALLOW, reason=reason,
-                                  policy_id=record.purpose.policy_id))
+        self._audit(
+            record.tenant_id,
+            record.agent_id,
+            record.session_id,
+            AuditOp.WRITE,
+            [record.id],
+            AuditDecision(
+                outcome=AuditOutcome.ALLOW, reason=reason, policy_id=record.purpose.policy_id
+            ),
+        )
         return record
 
     # ------------------------------------------------------------------
     # Read
     # ------------------------------------------------------------------
 
-    def get(self, memory_id: str, tenant_id: str) -> Optional[MemoryRecord]:
+    def get(self, memory_id: str, tenant_id: str) -> MemoryRecord | None:
         """Fetch one record by ID. Returns None if not found or wrong tenant."""
         _require_tenant(tenant_id)
         with self._conn() as conn:
@@ -303,7 +334,7 @@ class MemoryStore:
                 row = cur.fetchone()
         return _row_to_record(row) if row else None
 
-    def list_for_customer(self, tenant_id: str, customer_id: str) -> List[MemoryRecord]:
+    def list_for_customer(self, tenant_id: str, customer_id: str) -> list[MemoryRecord]:
         """All memories for a customer within a tenant, newest first."""
         _require_tenant(tenant_id)
         with self._conn() as conn:
@@ -316,7 +347,7 @@ class MemoryStore:
                 rows = cur.fetchall()
         return [_row_to_record(r) for r in rows]
 
-    def list_customers(self, tenant_id: str) -> List[dict]:
+    def list_customers(self, tenant_id: str) -> list[dict]:
         """Distinct customers for a tenant, with memory counts — for navigation UIs."""
         _require_tenant(tenant_id)
         with self._conn() as conn:
@@ -329,7 +360,7 @@ class MemoryStore:
                 )
                 return [dict(r) for r in cur.fetchall()]
 
-    def vector_search(self, query: str, tenant_id: str, k: int = 10) -> List[MemoryRecord]:
+    def vector_search(self, query: str, tenant_id: str, k: int = 10) -> list[MemoryRecord]:
         """
         Semantic similarity search — cosine distance via pgvector.
 
@@ -356,7 +387,7 @@ class MemoryStore:
                 rows = cur.fetchall()
         return [_row_to_record(r) for r in rows]
 
-    def lexical_search(self, query: str, tenant_id: str, k: int = 10) -> List[MemoryRecord]:
+    def lexical_search(self, query: str, tenant_id: str, k: int = 10) -> list[MemoryRecord]:
         """
         Full-text search via Postgres tsvector.
 
@@ -380,9 +411,16 @@ class MemoryStore:
                 rows = cur.fetchall()
         return [_row_to_record(r) for r in rows]
 
-    def retrieve(self, query: str, tenant_id: str, agent_id: str, session_id: str,
-                 purpose: Optional[str] = None, k: int = 10,
-                 include_untrusted: bool = False) -> List[MemoryRecord]:
+    def retrieve(
+        self,
+        query: str,
+        tenant_id: str,
+        agent_id: str,
+        session_id: str,
+        purpose: str | None = None,
+        k: int = 10,
+        include_untrusted: bool = False,
+    ) -> list[MemoryRecord]:
         """
         Governed hybrid retrieval — the Retrieval Engine (E3).
 
@@ -399,10 +437,12 @@ class MemoryStore:
         vector_results = self.vector_search(query, tenant_id, k=fetch_k)
         lexical_results = self.lexical_search(query, tenant_id, k=fetch_k)
 
-        fused_scores = reciprocal_rank_fusion([
-            [r.id for r in vector_results],
-            [r.id for r in lexical_results],
-        ])
+        fused_scores = reciprocal_rank_fusion(
+            [
+                [r.id for r in vector_results],
+                [r.id for r in lexical_results],
+            ]
+        )
         by_id = {r.id: r for r in vector_results + lexical_results}
         ranked = [by_id[i] for i in sorted(fused_scores, key=fused_scores.get, reverse=True)]
 
@@ -415,17 +455,21 @@ class MemoryStore:
             reason += f"; {filtered_count} filtered by privilege gate"
         outcome = AuditOutcome.GATED if filtered_count else AuditOutcome.ALLOW
 
-        self._audit(tenant_id, agent_id, session_id, AuditOp.RETRIEVE,
-                    [r.id for r in results],
-                    AuditDecision(outcome=outcome, reason=reason))
+        self._audit(
+            tenant_id,
+            agent_id,
+            session_id,
+            AuditOp.RETRIEVE,
+            [r.id for r in results],
+            AuditDecision(outcome=outcome, reason=reason),
+        )
         return results
 
     # ------------------------------------------------------------------
     # Governance mutations
     # ------------------------------------------------------------------
 
-    def quarantine(self, memory_id: str, tenant_id: str,
-                   reason: str = "manual quarantine") -> bool:
+    def quarantine(self, memory_id: str, tenant_id: str, reason: str = "manual quarantine") -> bool:
         """Mark a memory as quarantined — excluded by retrieve()'s privilege gate (E3)."""
         _require_tenant(tenant_id)
         with self._conn() as conn:
@@ -437,8 +481,14 @@ class MemoryStore:
                 )
                 updated = cur.rowcount > 0
         if updated:
-            self._audit(tenant_id, "system", "system", AuditOp.QUARANTINE, [memory_id],
-                        AuditDecision(outcome=AuditOutcome.ALLOW, reason=reason))
+            self._audit(
+                tenant_id,
+                "system",
+                "system",
+                AuditOp.QUARANTINE,
+                [memory_id],
+                AuditDecision(outcome=AuditOutcome.ALLOW, reason=reason),
+            )
         return updated
 
     def delete(self, memory_id: str, tenant_id: str) -> bool:
@@ -452,8 +502,14 @@ class MemoryStore:
                 )
                 deleted = cur.rowcount > 0
         if deleted:
-            self._audit(tenant_id, "system", "system", AuditOp.PURGE, [memory_id],
-                        AuditDecision(outcome=AuditOutcome.ALLOW, reason="hard delete"))
+            self._audit(
+                tenant_id,
+                "system",
+                "system",
+                AuditOp.PURGE,
+                [memory_id],
+                AuditDecision(outcome=AuditOutcome.ALLOW, reason="hard delete"),
+            )
         return deleted
 
     def get_stats(self, tenant_id: str) -> dict:
@@ -473,7 +529,7 @@ class MemoryStore:
     # Audit (hash-chained, append-only)
     # ------------------------------------------------------------------
 
-    def list_audit(self, tenant_id: str, limit: int = 50) -> List[dict]:
+    def list_audit(self, tenant_id: str, limit: int = 50) -> list[dict]:
         """Recent audit events for a tenant, newest first — for inspection/debugging."""
         _require_tenant(tenant_id)
         with self._conn() as conn:
@@ -487,8 +543,15 @@ class MemoryStore:
                 )
                 return [dict(r) for r in cur.fetchall()]
 
-    def _audit(self, tenant_id: str, agent_id: str, session_id: str,
-               op: AuditOp, memory_ids: List[str], decision: AuditDecision) -> None:
+    def _audit(
+        self,
+        tenant_id: str,
+        agent_id: str,
+        session_id: str,
+        op: AuditOp,
+        memory_ids: list[str],
+        decision: AuditDecision,
+    ) -> None:
         conn = psycopg2.connect(self._dsn)
         try:
             with conn.cursor() as cur:
@@ -500,7 +563,7 @@ class MemoryStore:
                 prev_hash = row[0] if row else ""
 
                 event_id = str(uuid.uuid4())
-                ts = datetime.now(timezone.utc).isoformat()
+                ts = datetime.now(UTC).isoformat()
                 payload = f"{event_id}{tenant_id}{ts}{op.value}{json.dumps(sorted(memory_ids))}{decision.outcome.value}"
                 current_hash = hashlib.sha256((prev_hash + payload).encode()).hexdigest()
 
@@ -508,9 +571,19 @@ class MemoryStore:
                     """INSERT INTO audit (id, tenant_id, ts, agent_id, session_id, op,
                                           memory_ids, outcome, reason, policy_id, hash, prev_hash)
                        VALUES (%s, %s, NOW(), %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                    (event_id, tenant_id, agent_id, session_id, op.value,
-                     json.dumps(memory_ids), decision.outcome.value,
-                     decision.reason, decision.policy_id, current_hash, prev_hash),
+                    (
+                        event_id,
+                        tenant_id,
+                        agent_id,
+                        session_id,
+                        op.value,
+                        json.dumps(memory_ids),
+                        decision.outcome.value,
+                        decision.reason,
+                        decision.policy_id,
+                        current_hash,
+                        prev_hash,
+                    ),
                 )
             conn.commit()
         finally:
@@ -520,6 +593,7 @@ class MemoryStore:
 # ---------------------------------------------------------------------------
 # Internal: row → model
 # ---------------------------------------------------------------------------
+
 
 def _row_to_record(row: dict) -> MemoryRecord:
     def _list(v) -> list:

@@ -8,17 +8,18 @@ Design notes:
 - Trust/taint fields are populated by the Write Governor (E2); E1 defines the schema only
 - Embedding is stored in Postgres, not in this Pydantic model (it's a DB concern)
 """
+
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from enum import Enum
-from typing import List, Optional
-from pydantic import BaseModel, Field
 import uuid
+from datetime import UTC, datetime
+from enum import Enum
+
+from pydantic import BaseModel, Field
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class SourceType(str, Enum):
@@ -38,37 +39,42 @@ class Taint(str, Enum):
 
 class Provenance(BaseModel):
     """Where did this memory come from?"""
+
     source_type: SourceType
-    source_ref: str                          # e.g. "Zendesk #4821", "email-thread-abc123"
+    source_ref: str  # e.g. "Zendesk #4821", "email-thread-abc123"
     ingested_at: datetime = Field(default_factory=_utcnow)
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
-    parent_ids: List[str] = Field(default_factory=list)  # provenance graph edges (E6)
+    parent_ids: list[str] = Field(default_factory=list)  # provenance graph edges (E6)
 
 
 class Trust(BaseModel):
     """Taint status assigned by the Write Governor (E2). Defaults to trusted."""
+
     taint: Taint = Taint.TRUSTED
-    taint_reason: Optional[str] = None
+    taint_reason: str | None = None
     injection_score: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
 class Purpose(BaseModel):
     """Which agent actions may use this memory?"""
-    allowed_purposes: List[str] = Field(default_factory=list)
+
+    allowed_purposes: list[str] = Field(default_factory=list)
     policy_id: str = "default"
 
 
 class Temporal(BaseModel):
     """Versioning and TTL — prevents stale memory from poisoning future reads."""
+
     valid_from: datetime = Field(default_factory=_utcnow)
-    valid_until: Optional[datetime] = None          # None = no expiry
-    superseded_by: Optional[str] = None             # UUID of replacement record
+    valid_until: datetime | None = None  # None = no expiry
+    superseded_by: str | None = None  # UUID of replacement record
     version: int = 1
 
 
 class Access(BaseModel):
     """Coarse-grained access control list (role names or agent IDs)."""
-    acl: List[str] = Field(default_factory=list)   # empty = open to all within tenant
+
+    acl: list[str] = Field(default_factory=list)  # empty = open to all within tenant
 
 
 class MemoryRecord(BaseModel):
@@ -76,12 +82,13 @@ class MemoryRecord(BaseModel):
     The canonical in-memory representation of a governed memory record.
     Persisted to Postgres; embedding stored separately in the vector column.
     """
+
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    tenant_id: str                  # isolation key — on every query
-    customer_id: str                # subject of the memory (the end-customer)
-    agent_id: str                   # agent that created this record
-    session_id: str                 # conversation session that created this record
-    content: str                    # the raw memory text
+    tenant_id: str  # isolation key — on every query
+    customer_id: str  # subject of the memory (the end-customer)
+    agent_id: str  # agent that created this record
+    session_id: str  # conversation session that created this record
+    content: str  # the raw memory text
     provenance: Provenance
     trust: Trust = Field(default_factory=Trust)
     purpose: Purpose = Field(default_factory=Purpose)
@@ -96,6 +103,7 @@ class WriteRequest(BaseModel):
     Caller-supplied input to MemoryStore.write().
     The store's Write Governor fills in trust/taint based on provenance + detection score.
     """
+
     tenant_id: str
     customer_id: str
     agent_id: str

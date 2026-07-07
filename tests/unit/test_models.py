@@ -11,23 +11,35 @@ No database or network required. These tests verify:
 
 Run: pytest tests/unit/test_models.py -v
 """
+
+from datetime import UTC, datetime, timedelta
+
 import pytest
-from datetime import datetime, timezone, timedelta
 from pydantic import ValidationError
 
-from core.models.memory_record import (
-    MemoryRecord, WriteRequest, Provenance, Trust, Taint,
-    Purpose, Temporal, Access, SourceType,
-)
 from core.models.audit_event import (
-    AuditEvent, AuditActor, AuditDecision, AuditOp, AuditOutcome,
+    AuditActor,
+    AuditDecision,
+    AuditEvent,
+    AuditOp,
+    AuditOutcome,
 )
-from core.models.policy import Policy, PurposeBinding, PrivilegeRules
-
+from core.models.memory_record import (
+    MemoryRecord,
+    Provenance,
+    Purpose,
+    SourceType,
+    Taint,
+    Temporal,
+    Trust,
+    WriteRequest,
+)
+from core.models.policy import Policy, PurposeBinding
 
 # ============================================================
 # Helpers
 # ============================================================
+
 
 def _make_provenance(**kwargs) -> Provenance:
     defaults = dict(source_type=SourceType.USER, source_ref="ticket-001")
@@ -62,12 +74,17 @@ def _make_memory_record(**kwargs) -> MemoryRecord:
 # SourceType enum
 # ============================================================
 
+
 class TestSourceType:
     def test_all_values_present(self):
         values = {st.value for st in SourceType}
         assert values == {
-            "user", "trusted_system", "tool_output",
-            "untrusted_web", "untrusted_email", "agent_derived",
+            "user",
+            "trusted_system",
+            "tool_output",
+            "untrusted_web",
+            "untrusted_email",
+            "agent_derived",
         }
 
     def test_roundtrip_from_string(self):
@@ -75,12 +92,13 @@ class TestSourceType:
 
     def test_invalid_value_raises(self):
         with pytest.raises(ValueError):
-            SourceType("ticket")   # old MVP value — must be rejected
+            SourceType("ticket")  # old MVP value — must be rejected
 
 
 # ============================================================
 # Taint enum
 # ============================================================
+
 
 class TestTaint:
     def test_all_values(self):
@@ -94,6 +112,7 @@ class TestTaint:
 # ============================================================
 # Provenance model
 # ============================================================
+
 
 class TestProvenance:
     def test_minimal_construction(self):
@@ -121,6 +140,7 @@ class TestProvenance:
 # Trust model
 # ============================================================
 
+
 class TestTrust:
     def test_defaults(self):
         t = Trust()
@@ -144,10 +164,11 @@ class TestTrust:
 # MemoryRecord — the core model
 # ============================================================
 
+
 class TestMemoryRecord:
     def test_required_fields(self):
         with pytest.raises(ValidationError):
-            MemoryRecord()   # missing everything
+            MemoryRecord()  # missing everything
 
     def test_tenant_id_is_required(self):
         with pytest.raises(ValidationError):
@@ -196,6 +217,7 @@ class TestMemoryRecord:
 # WriteRequest
 # ============================================================
 
+
 class TestWriteRequest:
     def test_minimal_request(self):
         req = _make_write_request()
@@ -209,7 +231,7 @@ class TestWriteRequest:
         assert "cx_support" in req.purpose.allowed_purposes
 
     def test_temporal_with_expiry(self):
-        future = datetime.now(timezone.utc) + timedelta(days=90)
+        future = datetime.now(UTC) + timedelta(days=90)
         req = _make_write_request(temporal=Temporal(valid_until=future))
         assert req.temporal.valid_until == future
 
@@ -217,6 +239,7 @@ class TestWriteRequest:
 # ============================================================
 # AuditEvent
 # ============================================================
+
 
 class TestAuditEvent:
     def test_construction(self):
@@ -228,7 +251,7 @@ class TestAuditEvent:
             decision=AuditDecision(outcome=AuditOutcome.ALLOW, reason="accepted"),
         )
         assert evt.op == AuditOp.WRITE
-        assert evt.hash == ""       # filled by store, not caller
+        assert evt.hash == ""  # filled by store, not caller
         assert evt.prev_hash == ""
 
     def test_all_ops_present(self):
@@ -244,6 +267,7 @@ class TestAuditEvent:
 # Policy model
 # ============================================================
 
+
 class TestPolicy:
     def test_default_privilege_rules(self):
         p = Policy(id="default", tenant_id="tenant-a")
@@ -252,7 +276,7 @@ class TestPolicy:
 
     def test_rbac_is_empty_stub(self):
         p = Policy(id="default", tenant_id="tenant-a")
-        assert p.rbac == []    # enterprise stub — always empty in OSS
+        assert p.rbac == []  # enterprise stub — always empty in OSS
 
     def test_purpose_bindings(self):
         p = Policy(
