@@ -39,6 +39,8 @@ from core.models.memory_record import (
     Trust,
     WriteRequest,
 )
+from core.models.policy import Policy, PrivilegeRules, PurposeBinding
+from core.policy_engine import evaluate_privileged_action, filter_by_purpose_binding
 from core.retrieval_engine import apply_privilege_gate, reciprocal_rank_fusion
 from core.write_governor import find_duplicate, scan_for_injection
 
@@ -137,6 +139,10 @@ $$;
 DROP TRIGGER IF EXISTS memory_updated_at ON memory;
 CREATE TRIGGER memory_updated_at
     BEFORE UPDATE ON memory FOR EACH ROW EXECUTE FUNCTION _set_updated_at();
+
+DROP TRIGGER IF EXISTS policy_updated_at ON policy;
+CREATE TRIGGER policy_updated_at
+    BEFORE UPDATE ON policy FOR EACH ROW EXECUTE FUNCTION _set_updated_at();
 """
 
 
@@ -162,6 +168,14 @@ def init_db(dsn: str) -> None:
 def _require_tenant(tenant_id: str) -> None:
     if not tenant_id or not tenant_id.strip():
         raise ValueError("tenant_id must not be empty — every operation is tenant-scoped")
+
+
+def _jsonb_list(v) -> list:
+    return v if isinstance(v, list) else json.loads(v)
+
+
+def _jsonb_dict(v) -> dict:
+    return v if isinstance(v, dict) else json.loads(v)
 
 
 class MemoryStore:
@@ -447,6 +461,9 @@ class MemoryStore:
         ranked = [by_id[i] for i in sorted(fused_scores, key=fused_scores.get, reverse=True)]
 
         gated = apply_privilege_gate(ranked, purpose=purpose, include_untrusted=include_untrusted)
+        gated = filter_by_purpose_binding(
+            gated, purpose, lambda pid: self.get_policy(tenant_id, pid)
+        )
         results = gated[:k]
 
         filtered_count = len(ranked) - len(gated)
@@ -464,6 +481,84 @@ class MemoryStore:
             AuditDecision(outcome=outcome, reason=reason),
         )
         return results
+
+    # ------------------------------------------------------------------
+    # Policy Engine (E4)
+    # ------------------------------------------------------------------
+
+    def get_policy(self, tenant_id: str, policy_id: str = "default") -> Policy:
+        """
+        Fetch a policy, or a permissive default if none has been configured.
+
+        The default (empty purpose_bindings, default PrivilegeRules) is not
+        persisted — it's synthesized on read. This means an unconfigured
+        tenant behaves exactly as it did before E4 (purpose bindings are a
+        no-op) while still getting PrivilegeRules' defaults, which already
+        require trust for send_email/refund/escalate with zero setup.
+        """
+        _require_tenant(tenant_id)
+        with self._conn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT * FROM policy WHERE id = %s AND tenant_id = %s",
+                    (policy_id, tenant_id),
+                )
+                row = cur.fetchone()
+        if row is None:
+            return Policy(id=policy_id, tenant_id=tenant_id)
+        return _row_to_policy(row)
+
+    def upsert_policy(self, policy: Policy) -> Policy:
+        """Create or update a policy. (id, tenant_id) together are the primary key."""
+        _require_tenant(policy.tenant_id)
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO policy (id, tenant_id, purpose_bindings, privilege_rules, rbac)
+                       VALUES (%s, %s, %s, %s, %s)
+                       ON CONFLICT (id, tenant_id) DO UPDATE SET
+                           purpose_bindings = EXCLUDED.purpose_bindings,
+                           privilege_rules = EXCLUDED.privilege_rules,
+                           rbac = EXCLUDED.rbac""",
+                    (
+                        policy.id,
+                        policy.tenant_id,
+                        json.dumps([b.model_dump() for b in policy.purpose_bindings]),
+                        json.dumps(policy.privilege_rules.model_dump()),
+                        json.dumps(policy.rbac),
+                    ),
+                )
+        return policy
+
+    def check_privilege(
+        self, memory_id: str, tenant_id: str, action: str, agent_id: str, session_id: str
+    ) -> bool:
+        """
+        May `action` be performed using this memory? Evaluates the memory's
+        own policy's privilege_rules (PrivilegeRules.privileged_actions +
+        require_trust) and emits an AuditOp.POLICY_DECISION event either
+        way — this is what that audit op existed for since E1 and never had
+        a caller until now.
+        """
+        _require_tenant(tenant_id)
+        record = self.get(memory_id, tenant_id)
+        if record is None:
+            allowed, reason, policy_id = False, "memory not found", "default"
+        else:
+            policy = self.get_policy(tenant_id, record.purpose.policy_id)
+            allowed, reason = evaluate_privileged_action(policy, action, record.trust.taint)
+            policy_id = policy.id
+
+        outcome = AuditOutcome.ALLOW if allowed else AuditOutcome.DENY
+        self._audit(
+            tenant_id,
+            agent_id,
+            session_id,
+            AuditOp.POLICY_DECISION,
+            [memory_id],
+            AuditDecision(outcome=outcome, reason=reason, policy_id=policy_id),
+        )
+        return allowed
 
     # ------------------------------------------------------------------
     # Governance mutations
@@ -596,9 +691,6 @@ class MemoryStore:
 
 
 def _row_to_record(row: dict) -> MemoryRecord:
-    def _list(v) -> list:
-        return v if isinstance(v, list) else json.loads(v)
-
     return MemoryRecord(
         id=str(row["id"]),
         tenant_id=row["tenant_id"],
@@ -611,7 +703,7 @@ def _row_to_record(row: dict) -> MemoryRecord:
             source_ref=row["source_ref"],
             ingested_at=row["ingested_at"],
             confidence=row["confidence"],
-            parent_ids=_list(row["parent_ids"]),
+            parent_ids=_jsonb_list(row["parent_ids"]),
         ),
         trust=Trust(
             taint=Taint(row["taint"]),
@@ -619,7 +711,7 @@ def _row_to_record(row: dict) -> MemoryRecord:
             injection_score=row["injection_score"],
         ),
         purpose=Purpose(
-            allowed_purposes=_list(row["allowed_purposes"]),
+            allowed_purposes=_jsonb_list(row["allowed_purposes"]),
             policy_id=row["policy_id"],
         ),
         temporal=Temporal(
@@ -628,7 +720,17 @@ def _row_to_record(row: dict) -> MemoryRecord:
             superseded_by=str(row["superseded_by"]) if row["superseded_by"] else None,
             version=row["version"],
         ),
-        access=Access(acl=_list(row["acl"])),
+        access=Access(acl=_jsonb_list(row["acl"])),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+    )
+
+
+def _row_to_policy(row: dict) -> Policy:
+    return Policy(
+        id=row["id"],
+        tenant_id=row["tenant_id"],
+        purpose_bindings=[PurposeBinding(**b) for b in _jsonb_list(row["purpose_bindings"])],
+        privilege_rules=PrivilegeRules(**_jsonb_dict(row["privilege_rules"])),
+        rbac=_jsonb_list(row["rbac"]),
     )

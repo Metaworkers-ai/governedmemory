@@ -5,7 +5,7 @@
 
 A governed memory layer for enterprise AI agents. Every memory record carries provenance, trust labels, purpose bindings, and a tamper-evident audit trail. Agents read only what they're allowed to read.
 
-**Current status:** E1 + E2 + E3 complete — core data models, Postgres+pgvector store, a Write Governor pipeline (injection scanning + dedup), and a governed Retrieval Engine (hybrid search + a real privilege gate) sit in front of every write and every read. No HTTP API yet (that's E7).
+**Current status:** E1 + E2 + E3 + E4 complete — core data models, Postgres+pgvector store, a Write Governor pipeline (injection scanning + dedup), a governed Retrieval Engine (hybrid search + a real privilege gate), and a Policy Engine (purpose-binding + privileged-action evaluation) sit in front of every write and every read. No HTTP API yet (that's E7).
 
 Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for setup and how to pick up an epic, [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community guidelines, and [SECURITY.md](SECURITY.md) to report a vulnerability.
 
@@ -52,6 +52,21 @@ Before E3, `quarantine()` claimed a quarantined record was "blocked by the privi
 | Governed retrieval | `MemoryStore.retrieve()` in `store.py` | The entry point agents should use — fuses vector+lexical, over-fetches before gating so filtering doesn't starve results, applies the privilege gate, and emits an `AuditOp.RETRIEVE` event either way |
 
 `vector_search()`/`lexical_search()` remain as raw, ungated primitives — useful for debugging or direct inspection, but they don't apply the privilege gate or audit anything. Both are still called internally by `retrieve()`.
+
+---
+
+## What's in E4
+
+The `Policy` model (`core/models/policy.py`) existed since E1 — a `policy` table, `purpose_bindings`, `privilege_rules`, a `policy_id` stamped on every memory — but nothing ever read it. Every write defaulted `policy_id="default"`, every retrieval only checked a record's own `allowed_purposes` (E3), and `AuditOp.POLICY_DECISION` was defined and never emitted. E4 is what actually evaluates a Policy document.
+
+| Component | File | What it does |
+|---|---|---|
+| Evaluator | `core/policy_engine/evaluator.py` | `evaluate_purpose_binding()` — is a record's `source_type` an acceptable origin for the requested `purpose`, per the *tenant-level* policy (distinct from E3's *record-level* `allowed_purposes` check). `evaluate_privileged_action()` — may an action (`send_email`/`refund`/`escalate` by default) be performed given a memory's current taint. |
+| Policy CRUD | `MemoryStore.get_policy()` / `.upsert_policy()` | Fetch a policy (falling back to a permissive default if none configured — zero setup required) or create/update one |
+| Privileged-action gate | `MemoryStore.check_privilege()` | The call site for "may agent X do action Y using memory Z" — evaluates `PrivilegeRules`, emits an `AuditOp.POLICY_DECISION` event either way |
+| Retrieval integration | `MemoryStore.retrieve()` | Now also applies `filter_by_purpose_binding()` after E3's privilege gate — a no-op until a policy with purpose bindings is actually configured, so existing behavior is unchanged unless you opt in |
+
+Zero configuration still gets you something: the default `PrivilegeRules` requires trust for `send_email`/`refund`/`escalate`, so `check_privilege(memory_id, tenant_id, "refund", ...)` on an untrusted or quarantined memory is denied out of the box, no policy setup needed.
 
 ---
 
@@ -188,8 +203,9 @@ Opens at `http://localhost:8501`. Tabs:
 |---|---|
 | Write | Write a memory with provenance (source type, confidence, purpose) |
 | Browse | List memories for a customer, expand to see full record |
-| Search | Governed `retrieve()` (fused + privilege-gated) vs. raw `vector_search()`/`lexical_search()` side by side — shows exactly what the privilege gate excludes |
+| Search | Governed `retrieve()` (fused + privilege-gated + policy-checked) vs. raw `vector_search()`/`lexical_search()` side by side — shows exactly what got excluded and why (taint, purpose, or k limit) |
 | Governance | Quarantine or delete a memory |
+| Policy | View the tenant's policy, add a purpose binding, and check whether a privileged action (`refund`/`send_email`/`escalate`) is allowed against a given memory |
 | Tenant Isolation | Write as tenant A, prove tenant B cannot read it |
 | Audit Log | View the hash-chained audit trail — each event's `prev_hash` matches the prior event's `hash` |
 
@@ -197,12 +213,15 @@ By default it uses `NullEmbeddingProvider` (zero vectors) unless `sentence-trans
 installed (`pip install -r requirements-embed-local.txt`), in which case vector search
 becomes real semantic search.
 
-### Demo data (for showing E1 to a customer)
+### Demo data (for showing E1–E4 to a customer)
 
 `scripts/demo_data.py` defines one tenant (`solstice-cloud`), five fictional customers, and
 50 realistic support/sales/billing memories — including 5 with embedded prompt-injection
 attempts (phishing emails, poisoned web scrapes) that get auto-tainted `untrusted` on write,
-a great live-demo moment.
+a great live-demo moment. `seed_demo.py` also configures a policy (E4): the `sales` purpose
+is restricted to `user`/`trusted_system` source types, which excludes two AI-agent-generated
+"sales agent summary" memories from `retrieve(purpose="sales")` — a live example of a policy
+saying "don't let an agent's own inference be the sole basis for a sales action."
 
 ```bash
 # Windows PowerShell, macOS, Linux — same command
@@ -562,21 +581,23 @@ governedmemory/
 │   ├── write_governor/     ← Write Governor (E2)
 │   │   ├── injection_scanner.py  ← Heuristic prompt-injection scorer
 │   │   └── dedup.py              ← Exact-duplicate detection + supersede
-│   └── retrieval_engine/   ← Retrieval Engine (E3)
-│       ├── fusion.py             ← Reciprocal rank fusion (vector + lexical)
-│       └── privilege_gate.py     ← Taint + purpose-binding enforcement on read
+│   ├── retrieval_engine/   ← Retrieval Engine (E3)
+│   │   ├── fusion.py             ← Reciprocal rank fusion (vector + lexical)
+│   │   └── privilege_gate.py     ← Taint + record-level purpose enforcement on read
+│   └── policy_engine/      ← Policy Engine (E4)
+│       └── evaluator.py          ← Tenant-level purpose-binding + privileged-action evaluation
 ├── deploy/
 │   ├── docker-compose.yml  ← Local Postgres+pgvector
 │   └── .env.example
 ├── frontend/
 │   └── app.py              ← Streamlit UI — try the store end-to-end in a browser
 ├── scripts/
-│   ├── demo_data.py        ← Shared demo dataset (one tenant, five customers, 50 memories)
+│   ├── demo_data.py        ← Shared demo dataset (one tenant, five customers, 50 memories, one policy)
 │   ├── seed_demo.py        ← Populate the demo tenant
 │   └── categorize_demo.py  ← Readiness report before a live demo
 ├── tests/
-│   ├── unit/               ← 61 tests, no Docker
-│   └── integration/        ← 33 tests, needs Docker
+│   ├── unit/               ← 75 tests, no Docker
+│   └── integration/        ← 41 tests, needs Docker
 ├── CONTRIBUTING.md
 ├── CODE_OF_CONDUCT.md
 ├── SECURITY.md
@@ -603,11 +624,10 @@ governedmemory/
 
 ---
 
-## What's next (E4–E7)
+## What's next (E5–E7)
 
 | Epic | What it adds |
 |---|---|
-| E4 | Policy Engine — purpose-binding evaluator |
 | E5 | Detection — injection classifier (precision/recall tracked) |
 | E6 | Audit Graph — cascade purge, provenance tree, hash-chain verifier |
 | E7 | Python SDK + FastAPI `/v1/` REST API |

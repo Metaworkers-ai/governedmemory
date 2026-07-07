@@ -120,15 +120,17 @@ governedmemory/
 │   ├── write_governor/         ← Write Governor (E2) — runs inside every MemoryStore.write()
 │   │   ├── injection_scanner.py ← Heuristic, rule-based prompt-injection scorer
 │   │   └── dedup.py             ← Exact-duplicate detection + version supersession
-│   └── retrieval_engine/       ← Retrieval Engine (E3) — runs inside MemoryStore.retrieve()
-│       ├── fusion.py            ← Reciprocal rank fusion (vector + lexical)
-│       └── privilege_gate.py    ← Taint + purpose-binding enforcement on read
+│   ├── retrieval_engine/       ← Retrieval Engine (E3) — runs inside MemoryStore.retrieve()
+│   │   ├── fusion.py            ← Reciprocal rank fusion (vector + lexical)
+│   │   └── privilege_gate.py    ← Taint + record-level purpose enforcement on read
+│   └── policy_engine/          ← Policy Engine (E4) — runs inside retrieve()/check_privilege()
+│       └── evaluator.py         ← Tenant-level purpose-binding + privileged-action evaluation
 │
 ├── frontend/
 │   └── app.py                  ← Streamlit UI — try the store end-to-end in a browser
 │
 ├── scripts/
-│   ├── demo_data.py             ← Shared demo dataset (one tenant, five customers, 50 memories)
+│   ├── demo_data.py             ← Shared demo dataset (one tenant, five customers, 50 memories, one policy)
 │   ├── seed_demo.py             ← Populate the demo tenant
 │   └── categorize_demo.py       ← Readiness report: taint/source/purpose breakdown, audit chain check
 │
@@ -153,7 +155,6 @@ governedmemory/
 
 ```
 core/
-├── policy_engine/              ← E4: policy evaluator (OPA-ready)
 ├── detection/                  ← E5: injection scanner + taint classifier
 └── audit/                      ← E6: provenance graph + cascade purge
 
@@ -221,6 +222,7 @@ These tests verify the definition of done across epics:
 - Write + read a record end-to-end, tenant isolation, `init_db()` idempotency, hash-chained audit log (E1)
 - Content-based injection tainting independent of `source_type`, dedup/supersede on duplicate writes (E2)
 - `retrieve()` excludes untrusted/quarantined by default, enforces purpose binding, respects `k`, emits an audit event (E3)
+- `get_policy()`/`upsert_policy()` roundtrip, `retrieve()` respects a configured purpose binding, `check_privilege()` denies untrusted memories for privileged actions and emits a `policy_decision` audit event (E4)
 
 ### Full suite with coverage
 
