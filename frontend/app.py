@@ -19,6 +19,7 @@ from dotenv import load_dotenv
 
 from core.memory_store import MemoryStore, NullEmbeddingProvider, init_db
 from core.models import Provenance, Purpose, SourceType, Taint, WriteRequest
+from core.retrieval_engine import reciprocal_rank_fusion, apply_privilege_gate
 
 load_dotenv()
 
@@ -228,23 +229,66 @@ with tab_browse:
 with tab_search:
     st.subheader("Search (tenant-scoped)")
     query = st.text_input("Query", placeholder="refund policy")
-    purpose_filter = st.text_input("Purpose (optional)", placeholder="e.g. billing, cx_support, sales",
-                                     help="If set, only records with this purpose in allowed_purposes "
-                                          "(or an empty allowed_purposes — open to any) are returned.")
-    include_untrusted = st.checkbox("Include untrusted/quarantined (bypass the privilege gate)")
+
+    KNOWN_PURPOSES = ["(no filter — any purpose)", "cx_support", "billing", "sales", "security", "retention", "Other…"]
+    purpose_choice = st.selectbox("Purpose", KNOWN_PURPOSES,
+                                   help="Filters to records whose allowed_purposes includes this value "
+                                        "(or is empty — open to any purpose).")
+    if purpose_choice == "Other…":
+        purpose_filter = st.text_input("Custom purpose") or None
+    elif purpose_choice == "(no filter — any purpose)":
+        purpose_filter = None
+    else:
+        purpose_filter = purpose_choice
+
+    col_k, col_untrusted = st.columns([1, 2])
+    with col_k:
+        k = st.slider("Max results (k)", 1, 20, 5)
+    with col_untrusted:
+        include_untrusted = st.checkbox("Include untrusted/quarantined (bypass the privilege gate)")
 
     if query and tenant_id:
+        # Reconstruct retrieve()'s own fuse-then-gate pipeline here (using the same
+        # exported, pure functions it calls internally) so we can show exactly what
+        # the gate excluded and why — retrieve() itself only returns the survivors.
+        fetch_k = max(k * 3, 20)
+        vector_results = store.vector_search(query, tenant_id, k=fetch_k)
+        lexical_results = store.lexical_search(query, tenant_id, k=fetch_k)
+        fused_scores = reciprocal_rank_fusion([
+            [r.id for r in vector_results], [r.id for r in lexical_results],
+        ])
+        by_id = {r.id: r for r in vector_results + lexical_results}
+        ranked = [by_id[i] for i in sorted(fused_scores, key=fused_scores.get, reverse=True)]
+        full_gated = apply_privilege_gate(ranked, purpose=purpose_filter, include_untrusted=include_untrusted)
+
+        gated_results = store.retrieve(query, tenant_id, agent_id, session_id,
+                                        purpose=purpose_filter, k=k, include_untrusted=include_untrusted)
+
         st.markdown("### `retrieve()` — governed hybrid search (E3)")
         st.caption("Reciprocal rank fusion over vector + lexical, then the privilege gate "
                    "(taint + purpose). This is what agents should actually call.")
-        gated_results = store.retrieve(query, tenant_id, agent_id, session_id,
-                                        purpose=purpose_filter or None, k=5,
-                                        include_untrusted=include_untrusted)
         if not gated_results:
             st.write("No results — try a broader query, a different purpose, or check the untrusted box.")
         for r in gated_results:
             taint_icon = {"trusted": "✅", "untrusted": "⚠️", "quarantined": "🚫"}[r.trust.taint.value]
             st.write(f"- {taint_icon} {r.content[:100]}  `purposes={r.purpose.allowed_purposes or ['any']}`")
+
+        gated_ids = {r.id for r in full_gated}
+        shown_ids = {r.id for r in gated_results}
+        excluded_by_gate = [r for r in ranked if r.id not in gated_ids]
+        cut_by_k = [r for r in full_gated if r.id not in shown_ids]
+
+        if excluded_by_gate or cut_by_k:
+            with st.expander(f"🔍 {len(excluded_by_gate) + len(cut_by_k)} candidate(s) not shown above — why"):
+                for r in excluded_by_gate:
+                    taint_icon = {"trusted": "✅", "untrusted": "⚠️", "quarantined": "🚫"}[r.trust.taint.value]
+                    if r.trust.taint != Taint.TRUSTED and not include_untrusted:
+                        reason = f"taint={r.trust.taint.value}"
+                    else:
+                        reason = f"purpose mismatch — needs one of {r.purpose.allowed_purposes}, not '{purpose_filter}'"
+                    st.write(f"- {taint_icon} {r.content[:80]} — **excluded by privilege gate** ({reason})")
+                for r in cut_by_k:
+                    st.write(f"- {r.content[:80]} — passed the gate but cut off by the k={k} result limit")
 
         st.divider()
         st.markdown("### Raw primitives (ungated — for comparison only)")
@@ -253,12 +297,12 @@ with tab_search:
         search_col1, search_col2 = st.columns(2)
         with search_col1:
             st.markdown("**Vector search** (semantic)")
-            for r in store.vector_search(query, tenant_id, k=5):
+            for r in vector_results[:k]:
                 taint_icon = {"trusted": "✅", "untrusted": "⚠️", "quarantined": "🚫"}[r.trust.taint.value]
                 st.write(f"- {taint_icon} {r.content[:100]}")
         with search_col2:
             st.markdown("**Lexical search** (full-text)")
-            for r in store.lexical_search(query, tenant_id, k=5):
+            for r in lexical_results[:k]:
                 taint_icon = {"trusted": "✅", "untrusted": "⚠️", "quarantined": "🚫"}[r.trust.taint.value]
                 st.write(f"- {taint_icon} {r.content[:100]}")
 
