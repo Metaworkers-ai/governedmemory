@@ -317,19 +317,22 @@ class MemoryStore:
                         (record.id, duplicate["id"]),
                     )
 
-        reason = "write accepted"
-        if duplicate:
-            reason += f"; supersedes {duplicate['id']}"
-        self._audit(
-            record.tenant_id,
-            record.agent_id,
-            record.session_id,
-            AuditOp.WRITE,
-            [record.id],
-            AuditDecision(
-                outcome=AuditOutcome.ALLOW, reason=reason, policy_id=record.purpose.policy_id
-            ),
-        )
+                reason = "write accepted"
+                if duplicate:
+                    reason += f"; supersedes {duplicate['id']}"
+                self._audit_in_tx(
+                    cur,
+                    record.tenant_id,
+                    record.agent_id,
+                    record.session_id,
+                    AuditOp.WRITE,
+                    [record.id],
+                    AuditDecision(
+                        outcome=AuditOutcome.ALLOW,
+                        reason=reason,
+                        policy_id=record.purpose.policy_id,
+                    ),
+                )
         return record
 
     # ------------------------------------------------------------------
@@ -575,15 +578,16 @@ class MemoryStore:
                     (reason, memory_id, tenant_id),
                 )
                 updated = cur.rowcount > 0
-        if updated:
-            self._audit(
-                tenant_id,
-                "system",
-                "system",
-                AuditOp.QUARANTINE,
-                [memory_id],
-                AuditDecision(outcome=AuditOutcome.ALLOW, reason=reason),
-            )
+                if updated:
+                    self._audit_in_tx(
+                        cur,
+                        tenant_id,
+                        "system",
+                        "system",
+                        AuditOp.QUARANTINE,
+                        [memory_id],
+                        AuditDecision(outcome=AuditOutcome.ALLOW, reason=reason),
+                    )
         return updated
 
     def delete(self, memory_id: str, tenant_id: str) -> bool:
@@ -596,15 +600,16 @@ class MemoryStore:
                     (memory_id, tenant_id),
                 )
                 deleted = cur.rowcount > 0
-        if deleted:
-            self._audit(
-                tenant_id,
-                "system",
-                "system",
-                AuditOp.PURGE,
-                [memory_id],
-                AuditDecision(outcome=AuditOutcome.ALLOW, reason="hard delete"),
-            )
+                if deleted:
+                    self._audit_in_tx(
+                        cur,
+                        tenant_id,
+                        "system",
+                        "system",
+                        AuditOp.PURGE,
+                        [memory_id],
+                        AuditDecision(outcome=AuditOutcome.ALLOW, reason="hard delete"),
+                    )
         return deleted
 
     def get_stats(self, tenant_id: str) -> dict:
@@ -638,6 +643,63 @@ class MemoryStore:
                 )
                 return [dict(r) for r in cur.fetchall()]
 
+    def _audit_in_tx(
+        self,
+        cur: psycopg2.extensions.cursor,
+        tenant_id: str,
+        agent_id: str,
+        session_id: str,
+        op: AuditOp,
+        memory_ids: list[str],
+        decision: AuditDecision,
+    ) -> None:
+        """
+        Emit one audit event using the caller's already-open cursor, so it
+        commits or rolls back atomically with whatever else that transaction
+        is doing (e.g. the memory row this event describes).
+
+        Takes a Postgres advisory transaction lock on tenant_id first.
+        Advisory locks are coordinated server-side across every connection,
+        not just this one, so this also serializes against a concurrent
+        _audit()/_audit_in_tx() call for the same tenant on a completely
+        separate connection (e.g. a concurrent retrieve()). Without it, two
+        concurrent audit-emitting transactions could both read the same
+        "last hash" before either commits, so the second event's prev_hash
+        would match the first's instead of chaining onto it -- a broken,
+        forked chain that defeats the tamper-evidence guarantee.
+        """
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (tenant_id,))
+        cur.execute(
+            "SELECT hash FROM audit WHERE tenant_id = %s ORDER BY ts DESC LIMIT 1",
+            (tenant_id,),
+        )
+        row = cur.fetchone()
+        prev_hash = row[0] if row else ""
+
+        event_id = str(uuid.uuid4())
+        ts = datetime.now(UTC).isoformat()
+        payload = f"{event_id}{tenant_id}{ts}{op.value}{json.dumps(sorted(memory_ids))}{decision.outcome.value}"
+        current_hash = hashlib.sha256((prev_hash + payload).encode()).hexdigest()
+
+        cur.execute(
+            """INSERT INTO audit (id, tenant_id, ts, agent_id, session_id, op,
+                                  memory_ids, outcome, reason, policy_id, hash, prev_hash)
+               VALUES (%s, %s, NOW(), %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+            (
+                event_id,
+                tenant_id,
+                agent_id,
+                session_id,
+                op.value,
+                json.dumps(memory_ids),
+                decision.outcome.value,
+                decision.reason,
+                decision.policy_id,
+                current_hash,
+                prev_hash,
+            ),
+        )
+
     def _audit(
         self,
         tenant_id: str,
@@ -647,42 +709,15 @@ class MemoryStore:
         memory_ids: list[str],
         decision: AuditDecision,
     ) -> None:
-        conn = psycopg2.connect(self._dsn)
-        try:
+        """
+        Emit one audit event on its own transaction. Use this when there's no
+        existing write to be atomic with (retrieve(), check_privilege()). For
+        a mutation that should commit-or-rollback together with its audit
+        event, call _audit_in_tx() with that mutation's own cursor instead.
+        """
+        with self._conn() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT hash FROM audit WHERE tenant_id = %s ORDER BY ts DESC LIMIT 1",
-                    (tenant_id,),
-                )
-                row = cur.fetchone()
-                prev_hash = row[0] if row else ""
-
-                event_id = str(uuid.uuid4())
-                ts = datetime.now(UTC).isoformat()
-                payload = f"{event_id}{tenant_id}{ts}{op.value}{json.dumps(sorted(memory_ids))}{decision.outcome.value}"
-                current_hash = hashlib.sha256((prev_hash + payload).encode()).hexdigest()
-
-                cur.execute(
-                    """INSERT INTO audit (id, tenant_id, ts, agent_id, session_id, op,
-                                          memory_ids, outcome, reason, policy_id, hash, prev_hash)
-                       VALUES (%s, %s, NOW(), %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                    (
-                        event_id,
-                        tenant_id,
-                        agent_id,
-                        session_id,
-                        op.value,
-                        json.dumps(memory_ids),
-                        decision.outcome.value,
-                        decision.reason,
-                        decision.policy_id,
-                        current_hash,
-                        prev_hash,
-                    ),
-                )
-            conn.commit()
-        finally:
-            conn.close()
+                self._audit_in_tx(cur, tenant_id, agent_id, session_id, op, memory_ids, decision)
 
 
 # ---------------------------------------------------------------------------

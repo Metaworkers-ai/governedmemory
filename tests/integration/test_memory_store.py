@@ -430,6 +430,55 @@ class TestAuditLog:
                 f"Hash chain broken at event {i}: prev_hash={rows[i][1]} != hash={rows[i - 1][0]}"
             )
 
+    def test_concurrent_writes_produce_a_valid_hash_chain(self, migrated_store, migrated_dsn):
+        """
+        Regression test: _audit() used to read "last hash" on its own,
+        separate connection with no locking, so N concurrent writes for the
+        same tenant could all read the same prev_hash and fork the chain.
+        Firing writes from a thread barrier maximizes real overlap; the
+        advisory lock in _audit_in_tx() should still serialize them into one
+        strictly ordered chain with no forks and no gaps.
+        """
+        import threading
+
+        import psycopg2
+
+        tenant = "tenant-audit-concurrency"
+        n = 8
+        barrier = threading.Barrier(n)
+
+        def _write(i: int) -> None:
+            barrier.wait()  # release all n threads at (as close to) the same instant
+            migrated_store.write(_req(tenant, content=f"concurrent memory {i}"))
+
+        threads = [threading.Thread(target=_write, args=(i,)) for i in range(n)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        conn = psycopg2.connect(migrated_dsn)
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT hash, prev_hash FROM audit WHERE tenant_id = %s AND op = 'write' ORDER BY ts ASC",
+                (tenant,),
+            )
+            rows = cur.fetchall()
+        conn.close()
+
+        assert len(rows) == n, f"expected {n} write audit events, got {len(rows)}"
+        assert rows[0][1] == "", "first event for a fresh tenant must have an empty prev_hash"
+        for i in range(1, len(rows)):
+            assert rows[i][1] == rows[i - 1][0], (
+                f"Hash chain broken/forked at event {i}: prev_hash={rows[i][1]} != "
+                f"hash={rows[i - 1][0]} -- two concurrent writes likely raced on 'last hash'"
+            )
+        # No two events should share a prev_hash -- that would mean the chain forked.
+        prev_hashes = [r[1] for r in rows]
+        assert len(prev_hashes) == len(set(prev_hashes)), (
+            "two audit events share the same prev_hash"
+        )
+
 
 # ============================================================
 # Vector search (basic smoke test — NullEmbeddingProvider returns zero vectors)
