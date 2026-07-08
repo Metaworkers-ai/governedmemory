@@ -38,4 +38,7 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
-ignore = ["E501"]   # line length handled by formatter
+ignore = [
+    "E501",  # line length handled by formatter
+    "UP042", # str+Enum -> StrEnum is an unsafe fix (changes __str__ behavior); revisit deliberately, not via autofix
+]

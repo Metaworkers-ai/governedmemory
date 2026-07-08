@@ -1,4 +1,4 @@
-from core.write_governor import normalize, find_duplicate
+from core.write_governor import find_duplicate, normalize
 
 
 class TestNormalize:
@@ -17,22 +17,30 @@ class TestFindDuplicate:
         assert find_duplicate([], "some content") is None
 
     def test_exact_match_returns_row(self):
-        existing = [{"id": "a1", "content": "Customer prefers email contact.", "superseded_by": None}]
+        existing = [
+            {"id": "a1", "content": "Customer prefers email contact.", "superseded_by": None}
+        ]
         result = find_duplicate(existing, "Customer prefers email contact.")
         assert result is not None
         assert result["id"] == "a1"
 
     def test_match_is_case_and_whitespace_insensitive(self):
-        existing = [{"id": "a1", "content": "Customer   prefers EMAIL contact.", "superseded_by": None}]
+        existing = [
+            {"id": "a1", "content": "Customer   prefers EMAIL contact.", "superseded_by": None}
+        ]
         result = find_duplicate(existing, "customer prefers email contact.")
         assert result is not None
 
     def test_different_content_returns_none(self):
-        existing = [{"id": "a1", "content": "Customer prefers email contact.", "superseded_by": None}]
+        existing = [
+            {"id": "a1", "content": "Customer prefers email contact.", "superseded_by": None}
+        ]
         assert find_duplicate(existing, "Customer prefers phone contact.") is None
 
     def test_already_superseded_row_is_ignored(self):
-        existing = [{"id": "a1", "content": "Customer prefers email contact.", "superseded_by": "b2"}]
+        existing = [
+            {"id": "a1", "content": "Customer prefers email contact.", "superseded_by": "b2"}
+        ]
         assert find_duplicate(existing, "Customer prefers email contact.") is None
 
     def test_returns_most_recent_when_multiple_present(self):

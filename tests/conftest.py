@@ -27,12 +27,13 @@ HOW TO RUN
     make test-integration
     make test
 """
-import os
+
 import pytest
 
 from core.memory_store.embeddings import NullEmbeddingProvider
 
 # ---- Shared fixtures available to ALL tests ----
+
 
 @pytest.fixture(scope="session")
 def null_embedder():

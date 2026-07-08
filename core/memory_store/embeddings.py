@@ -22,21 +22,21 @@ ADDING A NEW PROVIDER
 4. Add your provider class to this file and export it from core/memory_store/__init__.py.
 5. Write a unit test in tests/unit/test_embeddings.py.
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import List
 
 
 class EmbeddingProvider(ABC):
     """Abstract base — implement this to plug in any embedding model."""
 
     @abstractmethod
-    def embed(self, text: str) -> List[float]:
+    def embed(self, text: str) -> list[float]:
         """Return the embedding vector for a single text string."""
 
     @abstractmethod
-    def embed_batch(self, texts: List[str]) -> List[List[float]]:
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
         """Return embeddings for a list of texts. More efficient than looping embed()."""
 
     @property
@@ -52,6 +52,7 @@ class EmbeddingProvider(ABC):
 # ---------------------------------------------------------------------------
 # Local provider — no API key, works offline
 # ---------------------------------------------------------------------------
+
 
 class SentenceTransformerProvider(EmbeddingProvider):
     """
@@ -81,10 +82,10 @@ class SentenceTransformerProvider(EmbeddingProvider):
         self._model = SentenceTransformer(model_name)
         self._dims: int = self._model.get_sentence_embedding_dimension()
 
-    def embed(self, text: str) -> List[float]:
+    def embed(self, text: str) -> list[float]:
         return self._model.encode(text, show_progress_bar=False).tolist()
 
-    def embed_batch(self, texts: List[str]) -> List[List[float]]:
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
         return self._model.encode(texts, show_progress_bar=False).tolist()
 
     @property
@@ -95,6 +96,7 @@ class SentenceTransformerProvider(EmbeddingProvider):
 # ---------------------------------------------------------------------------
 # Test provider — zero vectors, no model needed
 # ---------------------------------------------------------------------------
+
 
 class NullEmbeddingProvider(EmbeddingProvider):
     """
@@ -108,10 +110,10 @@ class NullEmbeddingProvider(EmbeddingProvider):
     def __init__(self, dimensions: int = 768):
         self._dimensions = dimensions
 
-    def embed(self, text: str) -> List[float]:
+    def embed(self, text: str) -> list[float]:
         return [0.0] * self._dimensions
 
-    def embed_batch(self, texts: List[str]) -> List[List[float]]:
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
         return [[0.0] * self._dimensions for _ in texts]
 
     @property
@@ -122,6 +124,7 @@ class NullEmbeddingProvider(EmbeddingProvider):
 # ---------------------------------------------------------------------------
 # API providers (optional — install the relevant SDK to use)
 # ---------------------------------------------------------------------------
+
 
 class OpenAIEmbeddingProvider(EmbeddingProvider):
     """
@@ -146,11 +149,11 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         self._model = model
         self._dims = 1536 if "small" in model else 3072
 
-    def embed(self, text: str) -> List[float]:
+    def embed(self, text: str) -> list[float]:
         resp = self._client.embeddings.create(input=[text], model=self._model)
         return resp.data[0].embedding
 
-    def embed_batch(self, texts: List[str]) -> List[List[float]]:
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
         resp = self._client.embeddings.create(input=texts, model=self._model)
         return [d.embedding for d in resp.data]
 
@@ -175,15 +178,16 @@ class CohereEmbeddingProvider(EmbeddingProvider):
         except ImportError as exc:
             raise ImportError("Run: pip install cohere") from exc
         import os
+
         self._client = cohere.Client(os.environ["COHERE_API_KEY"])
         self._model = model
         self._dims = 1024
 
-    def embed(self, text: str) -> List[float]:
+    def embed(self, text: str) -> list[float]:
         resp = self._client.embed(texts=[text], model=self._model, input_type="search_document")
         return resp.embeddings[0]
 
-    def embed_batch(self, texts: List[str]) -> List[List[float]]:
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
         resp = self._client.embed(texts=texts, model=self._model, input_type="search_document")
         return resp.embeddings
 

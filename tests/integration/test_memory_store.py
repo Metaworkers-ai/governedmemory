@@ -13,18 +13,8 @@ E1 DEFINITION OF DONE (verified here)
 Run: pytest tests/integration/ -v
      (takes ~15s on first run to pull the Docker image)
 """
-import pytest
 
-# testcontainers spins up a Docker container automatically.
-# If Docker daemon is not running, tests are skipped (not failed) to avoid blocking CI.
-DOCKER_AVAILABLE = False
-try:
-    import docker as _docker
-    _docker.from_env().ping()   # actually connect to the daemon
-    from testcontainers.postgres import PostgresContainer
-    DOCKER_AVAILABLE = True
-except Exception:
-    pass
+import pytest
 
 from core.memory_store import MemoryStore, NullEmbeddingProvider, init_db
 from core.models import (
@@ -38,6 +28,19 @@ from core.models import (
     WriteRequest,
 )
 
+# testcontainers spins up a Docker container automatically.
+# If Docker daemon is not running, tests are skipped (not failed) to avoid blocking CI.
+DOCKER_AVAILABLE = False
+try:
+    import docker as _docker
+
+    _docker.from_env().ping()  # actually connect to the daemon
+    from testcontainers.postgres import PostgresContainer
+
+    DOCKER_AVAILABLE = True
+except Exception:
+    pass
+
 POSTGRES_IMAGE = "pgvector/pgvector:pg16"  # official image with pgvector pre-installed
 
 pytestmark = pytest.mark.skipif(
@@ -50,6 +53,7 @@ pytestmark = pytest.mark.skipif(
 # Session-scoped fixtures: one DB per test session
 # ============================================================
 
+
 @pytest.fixture(scope="session")
 def postgres_dsn():
     """Spin up a Postgres+pgvector container for the test session."""
@@ -58,6 +62,7 @@ def postgres_dsn():
         dsn = url.replace("postgresql+psycopg2://", "postgresql://")
         # Verify pgvector is actually available in this image before running any tests
         import psycopg2
+
         try:
             conn = psycopg2.connect(dsn)
             conn.autocommit = True
@@ -87,8 +92,14 @@ def migrated_dsn(postgres_dsn):
 # Helpers
 # ============================================================
 
-def _req(tenant_id: str, customer_id: str = "cust-001", content: str = "test memory",
-         source_type: SourceType = SourceType.USER, allowed_purposes: list = None) -> WriteRequest:
+
+def _req(
+    tenant_id: str,
+    customer_id: str = "cust-001",
+    content: str = "test memory",
+    source_type: SourceType = SourceType.USER,
+    allowed_purposes: list = None,
+) -> WriteRequest:
     return WriteRequest(
         tenant_id=tenant_id,
         customer_id=customer_id,
@@ -104,6 +115,7 @@ def _req(tenant_id: str, customer_id: str = "cust-001", content: str = "test mem
 # Migration idempotency
 # ============================================================
 
+
 class TestMigrations:
     def test_init_db_is_idempotent(self, postgres_dsn):
         """Calling init_db twice must not raise — all statements use IF NOT EXISTS."""
@@ -112,6 +124,7 @@ class TestMigrations:
 
     def test_memory_table_exists(self, postgres_dsn):
         import psycopg2
+
         conn = psycopg2.connect(postgres_dsn)
         with conn.cursor() as cur:
             cur.execute(
@@ -120,18 +133,36 @@ class TestMigrations:
             columns = {row[0] for row in cur.fetchall()}
         conn.close()
         expected = {
-            "id", "tenant_id", "customer_id", "agent_id", "session_id",
-            "content", "embedding",
-            "source_type", "source_ref", "ingested_at", "confidence", "parent_ids",
-            "taint", "taint_reason", "injection_score",
-            "allowed_purposes", "policy_id",
-            "valid_from", "valid_until", "superseded_by", "version",
-            "acl", "created_at", "updated_at",
+            "id",
+            "tenant_id",
+            "customer_id",
+            "agent_id",
+            "session_id",
+            "content",
+            "embedding",
+            "source_type",
+            "source_ref",
+            "ingested_at",
+            "confidence",
+            "parent_ids",
+            "taint",
+            "taint_reason",
+            "injection_score",
+            "allowed_purposes",
+            "policy_id",
+            "valid_from",
+            "valid_until",
+            "superseded_by",
+            "version",
+            "acl",
+            "created_at",
+            "updated_at",
         }
         assert expected <= columns, f"Missing columns: {expected - columns}"
 
     def test_audit_table_exists(self, postgres_dsn):
         import psycopg2
+
         conn = psycopg2.connect(postgres_dsn)
         with conn.cursor() as cur:
             cur.execute(
@@ -146,6 +177,7 @@ class TestMigrations:
 # ============================================================
 # E1 Definition of Done: write + read a record
 # ============================================================
+
 
 class TestWriteAndRead:
     def test_write_returns_record_with_id(self, migrated_store):
@@ -199,6 +231,7 @@ class TestWriteAndRead:
 # E2 Definition of Done: Write Governor (injection scan + dedup)
 # ============================================================
 
+
 class TestWriteGovernor:
     def test_injection_pattern_taints_even_trusted_source(self, migrated_store):
         """A trusted_system record with injected content must still be flagged."""
@@ -233,10 +266,12 @@ class TestWriteGovernor:
 
     def test_duplicate_ignores_whitespace_and_case(self, migrated_store):
         tenant = "tenant-e2-dedup-norm"
-        first = migrated_store.write(_req(tenant, customer_id="cust-norm",
-                                           content="Customer  likes   EMAIL."))
-        second = migrated_store.write(_req(tenant, customer_id="cust-norm",
-                                            content="customer likes email."))
+        first = migrated_store.write(
+            _req(tenant, customer_id="cust-norm", content="Customer  likes   EMAIL.")
+        )
+        second = migrated_store.write(
+            _req(tenant, customer_id="cust-norm", content="customer likes email.")
+        )
         refetched_first = migrated_store.get(first.id, tenant)
         assert refetched_first.temporal.superseded_by == second.id
 
@@ -251,7 +286,9 @@ class TestWriteGovernor:
         tenant = "tenant-e2-search-dedup"
         content = "Customer contact preference is email only."
         migrated_store.write(_req(tenant, customer_id="cust-search-dedup", content=content))
-        second = migrated_store.write(_req(tenant, customer_id="cust-search-dedup", content=content))
+        second = migrated_store.write(
+            _req(tenant, customer_id="cust-search-dedup", content=content)
+        )
 
         results = migrated_store.lexical_search("contact preference", tenant, k=10)
         ids = [r.id for r in results]
@@ -262,6 +299,7 @@ class TestWriteGovernor:
 # ============================================================
 # E1 Definition of Done: tenant isolation
 # ============================================================
+
 
 class TestTenantIsolation:
     """
@@ -310,6 +348,7 @@ class TestTenantIsolation:
 # Governance mutations
 # ============================================================
 
+
 class TestGovernanceMutations:
     def test_quarantine_changes_taint(self, migrated_store):
         record = migrated_store.write(_req("tenant-quar"))
@@ -325,7 +364,7 @@ class TestGovernanceMutations:
     def test_quarantine_wrong_tenant_fails(self, migrated_store):
         record = migrated_store.write(_req("tenant-quar-a"))
         success = migrated_store.quarantine(record.id, "tenant-quar-b")
-        assert success is False   # wrong tenant — must not affect record
+        assert success is False  # wrong tenant — must not affect record
 
     def test_delete_removes_record(self, migrated_store):
         record = migrated_store.write(_req("tenant-del"))
@@ -344,11 +383,13 @@ class TestGovernanceMutations:
 # Audit log
 # ============================================================
 
+
 class TestAuditLog:
     def test_write_emits_audit_event(self, migrated_store, migrated_dsn):
         import psycopg2
+
         tenant = "tenant-audit-write"
-        record = migrated_store.write(_req(tenant))
+        migrated_store.write(_req(tenant))
 
         conn = psycopg2.connect(migrated_dsn)
         with conn.cursor() as cur:
@@ -363,11 +404,12 @@ class TestAuditLog:
         op, outcome, hash_val, prev_hash = row
         assert op == "write"
         assert outcome == "allow"
-        assert len(hash_val) == 64   # SHA-256 hex = 64 chars
+        assert len(hash_val) == 64  # SHA-256 hex = 64 chars
 
     def test_audit_hash_chain_is_valid(self, migrated_store, migrated_dsn):
         """Verify hash-chaining: each event's prev_hash matches the previous event's hash."""
         import psycopg2
+
         tenant = "tenant-audit-chain"
         for i in range(3):
             migrated_store.write(_req(tenant, content=f"memory {i}"))
@@ -385,14 +427,14 @@ class TestAuditLog:
         # Each event's prev_hash must equal the prior event's hash
         for i in range(1, len(rows)):
             assert rows[i][1] == rows[i - 1][0], (
-                f"Hash chain broken at event {i}: "
-                f"prev_hash={rows[i][1]} != hash={rows[i-1][0]}"
+                f"Hash chain broken at event {i}: prev_hash={rows[i][1]} != hash={rows[i - 1][0]}"
             )
 
 
 # ============================================================
 # Vector search (basic smoke test — NullEmbeddingProvider returns zero vectors)
 # ============================================================
+
 
 class TestVectorSearch:
     def test_vector_search_returns_results(self, migrated_store):
@@ -416,13 +458,26 @@ class TestVectorSearch:
 # E3 Definition of Done: Retrieval Engine (hybrid search + privilege gate)
 # ============================================================
 
+
 class TestRetrievalEngine:
     def test_retrieve_excludes_untrusted_by_default(self, migrated_store):
         tenant = "tenant-e3-untrusted"
-        migrated_store.write(_req(tenant, customer_id="cust-1", content="trusted refund policy note",
-                                   source_type=SourceType.TRUSTED_SYSTEM))
-        migrated_store.write(_req(tenant, customer_id="cust-1", content="untrusted refund policy note",
-                                   source_type=SourceType.UNTRUSTED_EMAIL))
+        migrated_store.write(
+            _req(
+                tenant,
+                customer_id="cust-1",
+                content="trusted refund policy note",
+                source_type=SourceType.TRUSTED_SYSTEM,
+            )
+        )
+        migrated_store.write(
+            _req(
+                tenant,
+                customer_id="cust-1",
+                content="untrusted refund policy note",
+                source_type=SourceType.UNTRUSTED_EMAIL,
+            )
+        )
 
         results = migrated_store.retrieve("refund policy", tenant, "agent-1", "sess-1", k=10)
         assert all(r.trust.taint == Taint.TRUSTED for r in results)
@@ -431,18 +486,27 @@ class TestRetrievalEngine:
 
     def test_retrieve_includes_untrusted_when_requested(self, migrated_store):
         tenant = "tenant-e3-include-untrusted"
-        migrated_store.write(_req(tenant, customer_id="cust-1", content="shared topic alpha",
-                                   source_type=SourceType.UNTRUSTED_WEB))
+        migrated_store.write(
+            _req(
+                tenant,
+                customer_id="cust-1",
+                content="shared topic alpha",
+                source_type=SourceType.UNTRUSTED_WEB,
+            )
+        )
 
         gated = migrated_store.retrieve("topic alpha", tenant, "agent-1", "sess-1", k=10)
-        ungated = migrated_store.retrieve("topic alpha", tenant, "agent-1", "sess-1", k=10,
-                                           include_untrusted=True)
+        ungated = migrated_store.retrieve(
+            "topic alpha", tenant, "agent-1", "sess-1", k=10, include_untrusted=True
+        )
         assert len(gated) == 0
         assert len(ungated) == 1
 
     def test_retrieve_excludes_quarantined(self, migrated_store):
         tenant = "tenant-e3-quarantine"
-        record = migrated_store.write(_req(tenant, customer_id="cust-1", content="quarantine topic note"))
+        record = migrated_store.write(
+            _req(tenant, customer_id="cust-1", content="quarantine topic note")
+        )
         migrated_store.quarantine(record.id, tenant, reason="test quarantine")
 
         results = migrated_store.retrieve("quarantine topic", tenant, "agent-1", "sess-1", k=10)
@@ -450,15 +514,24 @@ class TestRetrievalEngine:
 
     def test_retrieve_purpose_filtering(self, migrated_store):
         tenant = "tenant-e3-purpose"
-        migrated_store.write(_req(tenant, customer_id="cust-1", content="billing purpose note",
-                                   allowed_purposes=["billing"]))
-        migrated_store.write(_req(tenant, customer_id="cust-1", content="open purpose note",
-                                   allowed_purposes=[]))
+        migrated_store.write(
+            _req(
+                tenant,
+                customer_id="cust-1",
+                content="billing purpose note",
+                allowed_purposes=["billing"],
+            )
+        )
+        migrated_store.write(
+            _req(tenant, customer_id="cust-1", content="open purpose note", allowed_purposes=[])
+        )
 
-        billing_view = migrated_store.retrieve("purpose note", tenant, "agent-1", "sess-1",
-                                                 purpose="billing", k=10)
-        sales_view = migrated_store.retrieve("purpose note", tenant, "agent-1", "sess-1",
-                                              purpose="sales", k=10)
+        billing_view = migrated_store.retrieve(
+            "purpose note", tenant, "agent-1", "sess-1", purpose="billing", k=10
+        )
+        sales_view = migrated_store.retrieve(
+            "purpose note", tenant, "agent-1", "sess-1", purpose="sales", k=10
+        )
 
         billing_contents = [r.content for r in billing_view]
         sales_contents = [r.content for r in sales_view]
@@ -476,6 +549,7 @@ class TestRetrievalEngine:
 
     def test_retrieve_emits_audit_event(self, migrated_store, migrated_dsn):
         import psycopg2
+
         tenant = "tenant-e3-audit"
         migrated_store.write(_req(tenant, customer_id="cust-1", content="audit retrieval note"))
         migrated_store.retrieve("audit retrieval", tenant, "agent-1", "sess-1", k=5)
@@ -496,6 +570,7 @@ class TestRetrievalEngine:
 # E4 Definition of Done: Policy Engine (purpose-binding evaluator)
 # ============================================================
 
+
 class TestPolicyEngine:
     def test_get_policy_returns_permissive_default_when_unconfigured(self, migrated_store):
         policy = migrated_store.get_policy("tenant-e4-default", "default")
@@ -506,7 +581,8 @@ class TestPolicyEngine:
     def test_upsert_and_get_policy_roundtrip(self, migrated_store):
         tenant = "tenant-e4-roundtrip"
         policy = Policy(
-            id="default", tenant_id=tenant,
+            id="default",
+            tenant_id=tenant,
             purpose_bindings=[PurposeBinding(purpose="sales", allowed_source_types=["user"])],
             privilege_rules=PrivilegeRules(privileged_actions=["refund"], require_trust=True),
         )
@@ -520,61 +596,110 @@ class TestPolicyEngine:
 
     def test_upsert_policy_is_idempotent_update(self, migrated_store):
         tenant = "tenant-e4-update"
-        migrated_store.upsert_policy(Policy(
-            id="default", tenant_id=tenant,
-            purpose_bindings=[PurposeBinding(purpose="sales", allowed_source_types=["user"])],
-        ))
-        migrated_store.upsert_policy(Policy(
-            id="default", tenant_id=tenant,
-            purpose_bindings=[PurposeBinding(purpose="sales", allowed_source_types=["trusted_system"])],
-        ))
+        migrated_store.upsert_policy(
+            Policy(
+                id="default",
+                tenant_id=tenant,
+                purpose_bindings=[PurposeBinding(purpose="sales", allowed_source_types=["user"])],
+            )
+        )
+        migrated_store.upsert_policy(
+            Policy(
+                id="default",
+                tenant_id=tenant,
+                purpose_bindings=[
+                    PurposeBinding(purpose="sales", allowed_source_types=["trusted_system"])
+                ],
+            )
+        )
         fetched = migrated_store.get_policy(tenant, "default")
         assert len(fetched.purpose_bindings) == 1
         assert fetched.purpose_bindings[0].allowed_source_types == ["trusted_system"]
 
     def test_retrieve_respects_configured_purpose_binding(self, migrated_store):
         tenant = "tenant-e4-retrieve-binding"
-        migrated_store.upsert_policy(Policy(
-            id="default", tenant_id=tenant,
-            purpose_bindings=[PurposeBinding(purpose="sales", allowed_source_types=["user"])],
-        ))
-        migrated_store.write(_req(tenant, customer_id="cust-1", content="sales note from a user",
-                                   source_type=SourceType.USER))
-        migrated_store.write(_req(tenant, customer_id="cust-1", content="sales note from an agent summary",
-                                   source_type=SourceType.AGENT_DERIVED))
+        migrated_store.upsert_policy(
+            Policy(
+                id="default",
+                tenant_id=tenant,
+                purpose_bindings=[PurposeBinding(purpose="sales", allowed_source_types=["user"])],
+            )
+        )
+        migrated_store.write(
+            _req(
+                tenant,
+                customer_id="cust-1",
+                content="sales note from a user",
+                source_type=SourceType.USER,
+            )
+        )
+        migrated_store.write(
+            _req(
+                tenant,
+                customer_id="cust-1",
+                content="sales note from an agent summary",
+                source_type=SourceType.AGENT_DERIVED,
+            )
+        )
 
-        results = migrated_store.retrieve("sales note", tenant, "agent-1", "sess-1",
-                                           purpose="sales", k=10)
+        results = migrated_store.retrieve(
+            "sales note", tenant, "agent-1", "sess-1", purpose="sales", k=10
+        )
         contents = [r.content for r in results]
         assert "sales note from a user" in contents
         assert "sales note from an agent summary" not in contents
 
     def test_check_privilege_denies_untrusted_by_default(self, migrated_store):
         tenant = "tenant-e4-privilege-deny"
-        record = migrated_store.write(_req(tenant, customer_id="cust-1", content="refund-worthy note",
-                                            source_type=SourceType.UNTRUSTED_EMAIL))
+        record = migrated_store.write(
+            _req(
+                tenant,
+                customer_id="cust-1",
+                content="refund-worthy note",
+                source_type=SourceType.UNTRUSTED_EMAIL,
+            )
+        )
         allowed = migrated_store.check_privilege(record.id, tenant, "refund", "agent-1", "sess-1")
         assert allowed is False
 
     def test_check_privilege_allows_trusted(self, migrated_store):
         tenant = "tenant-e4-privilege-allow"
-        record = migrated_store.write(_req(tenant, customer_id="cust-1", content="trusted refund note",
-                                            source_type=SourceType.TRUSTED_SYSTEM))
+        record = migrated_store.write(
+            _req(
+                tenant,
+                customer_id="cust-1",
+                content="trusted refund note",
+                source_type=SourceType.TRUSTED_SYSTEM,
+            )
+        )
         allowed = migrated_store.check_privilege(record.id, tenant, "refund", "agent-1", "sess-1")
         assert allowed is True
 
     def test_check_privilege_allows_non_privileged_action_even_if_untrusted(self, migrated_store):
         tenant = "tenant-e4-privilege-nonaction"
-        record = migrated_store.write(_req(tenant, customer_id="cust-1", content="just a read",
-                                            source_type=SourceType.UNTRUSTED_WEB))
+        record = migrated_store.write(
+            _req(
+                tenant,
+                customer_id="cust-1",
+                content="just a read",
+                source_type=SourceType.UNTRUSTED_WEB,
+            )
+        )
         allowed = migrated_store.check_privilege(record.id, tenant, "read", "agent-1", "sess-1")
         assert allowed is True
 
     def test_check_privilege_emits_audit_event(self, migrated_store, migrated_dsn):
         import psycopg2
+
         tenant = "tenant-e4-privilege-audit"
-        record = migrated_store.write(_req(tenant, customer_id="cust-1", content="audited refund note",
-                                            source_type=SourceType.UNTRUSTED_EMAIL))
+        record = migrated_store.write(
+            _req(
+                tenant,
+                customer_id="cust-1",
+                content="audited refund note",
+                source_type=SourceType.UNTRUSTED_EMAIL,
+            )
+        )
         migrated_store.check_privilege(record.id, tenant, "refund", "agent-1", "sess-1")
 
         conn = psycopg2.connect(migrated_dsn)
