@@ -438,6 +438,14 @@ class TestAuditLog:
         Firing writes from a thread barrier maximizes real overlap; the
         advisory lock in _audit_in_tx() should still serialize them into one
         strictly ordered chain with no forks and no gaps.
+
+        Verifies the chain by following hash -> prev_hash links rather than
+        trusting `ORDER BY ts`: NOW() (and hence `ts`) is fixed at
+        transaction *start*, not statement execution time, so under
+        concurrent transactions "who started first" and "who actually
+        acquired the lock and inserted first" can disagree. The links
+        themselves are the actual claim the chain makes; walking them is the
+        direct way to check it holds, independent of timestamp ordering.
         """
         import threading
 
@@ -460,23 +468,33 @@ class TestAuditLog:
         conn = psycopg2.connect(migrated_dsn)
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT hash, prev_hash FROM audit WHERE tenant_id = %s AND op = 'write' ORDER BY ts ASC",
+                "SELECT hash, prev_hash FROM audit WHERE tenant_id = %s AND op = 'write'",
                 (tenant,),
             )
             rows = cur.fetchall()
         conn.close()
 
         assert len(rows) == n, f"expected {n} write audit events, got {len(rows)}"
-        assert rows[0][1] == "", "first event for a fresh tenant must have an empty prev_hash"
-        for i in range(1, len(rows)):
-            assert rows[i][1] == rows[i - 1][0], (
-                f"Hash chain broken/forked at event {i}: prev_hash={rows[i][1]} != "
-                f"hash={rows[i - 1][0]} -- two concurrent writes likely raced on 'last hash'"
+
+        # Exactly one row should chain onto the empty root, and every hash
+        # should be claimed as a prev_hash by exactly one other row -- i.e.
+        # this is one straight line, not a fork (two rows sharing a
+        # prev_hash) or a break (a hash nothing points to as its prev_hash).
+        next_by_prev_hash = {}
+        for hash_, prev_hash in rows:
+            assert prev_hash not in next_by_prev_hash, (
+                f"two events share prev_hash={prev_hash} -- the chain forked"
             )
-        # No two events should share a prev_hash -- that would mean the chain forked.
-        prev_hashes = [r[1] for r in rows]
-        assert len(prev_hashes) == len(set(prev_hashes)), (
-            "two audit events share the same prev_hash"
+            next_by_prev_hash[prev_hash] = hash_
+
+        current = ""
+        visited = 0
+        while current in next_by_prev_hash:
+            current = next_by_prev_hash[current]
+            visited += 1
+        assert visited == n, (
+            f"followed the chain from the empty root through {visited} of {n} events -- "
+            "broken partway, likely two writes racing on 'last hash'"
         )
 
 

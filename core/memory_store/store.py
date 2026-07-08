@@ -689,10 +689,17 @@ class MemoryStore:
             payload = f"{event_id}{tenant_id}{ts}{op.value}{json.dumps(sorted(memory_ids))}{decision.outcome.value}"
             current_hash = hashlib.sha256((prev_hash + payload).encode()).hexdigest()
 
+            # clock_timestamp(), not NOW(): NOW() is fixed at transaction
+            # *start*, so under concurrent transactions serialized by the
+            # advisory lock above, "who started their transaction first" and
+            # "who actually got the lock and inserted first" can disagree --
+            # ts would then misorder the chain relative to its true, locked
+            # insertion order. clock_timestamp() is the actual wall-clock
+            # time of this statement, which does match insertion order.
             audit_cur.execute(
                 """INSERT INTO audit (id, tenant_id, ts, agent_id, session_id, op,
                                       memory_ids, outcome, reason, policy_id, hash, prev_hash)
-                   VALUES (%s, %s, NOW(), %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                   VALUES (%s, %s, clock_timestamp(), %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                 (
                     event_id,
                     tenant_id,
