@@ -667,38 +667,46 @@ class MemoryStore:
         "last hash" before either commits, so the second event's prev_hash
         would match the first's instead of chaining onto it -- a broken,
         forked chain that defeats the tamper-evidence guarantee.
+
+        Runs its own queries on a fresh plain cursor from `cur`'s connection
+        rather than `cur` itself: callers open `cur` with whatever
+        cursor_factory suits their own query (e.g. write()'s RealDictCursor),
+        and this method's row access shouldn't be coupled to that choice. It
+        still shares the same connection/transaction, so atomicity and the
+        advisory lock's scope are unaffected.
         """
-        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (tenant_id,))
-        cur.execute(
-            "SELECT hash FROM audit WHERE tenant_id = %s ORDER BY ts DESC LIMIT 1",
-            (tenant_id,),
-        )
-        row = cur.fetchone()
-        prev_hash = row[0] if row else ""
+        with cur.connection.cursor() as audit_cur:
+            audit_cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (tenant_id,))
+            audit_cur.execute(
+                "SELECT hash FROM audit WHERE tenant_id = %s ORDER BY ts DESC LIMIT 1",
+                (tenant_id,),
+            )
+            row = audit_cur.fetchone()
+            prev_hash = row[0] if row else ""
 
-        event_id = str(uuid.uuid4())
-        ts = datetime.now(UTC).isoformat()
-        payload = f"{event_id}{tenant_id}{ts}{op.value}{json.dumps(sorted(memory_ids))}{decision.outcome.value}"
-        current_hash = hashlib.sha256((prev_hash + payload).encode()).hexdigest()
+            event_id = str(uuid.uuid4())
+            ts = datetime.now(UTC).isoformat()
+            payload = f"{event_id}{tenant_id}{ts}{op.value}{json.dumps(sorted(memory_ids))}{decision.outcome.value}"
+            current_hash = hashlib.sha256((prev_hash + payload).encode()).hexdigest()
 
-        cur.execute(
-            """INSERT INTO audit (id, tenant_id, ts, agent_id, session_id, op,
-                                  memory_ids, outcome, reason, policy_id, hash, prev_hash)
-               VALUES (%s, %s, NOW(), %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-            (
-                event_id,
-                tenant_id,
-                agent_id,
-                session_id,
-                op.value,
-                json.dumps(memory_ids),
-                decision.outcome.value,
-                decision.reason,
-                decision.policy_id,
-                current_hash,
-                prev_hash,
-            ),
-        )
+            audit_cur.execute(
+                """INSERT INTO audit (id, tenant_id, ts, agent_id, session_id, op,
+                                      memory_ids, outcome, reason, policy_id, hash, prev_hash)
+                   VALUES (%s, %s, NOW(), %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (
+                    event_id,
+                    tenant_id,
+                    agent_id,
+                    session_id,
+                    op.value,
+                    json.dumps(memory_ids),
+                    decision.outcome.value,
+                    decision.reason,
+                    decision.policy_id,
+                    current_hash,
+                    prev_hash,
+                ),
+            )
 
     def _audit(
         self,
