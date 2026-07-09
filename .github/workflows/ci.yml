@@ -24,10 +24,11 @@ jobs:
         run: |
           pip install -r requirements-dev.txt
           pip install -e .
+          pip install -e sdk/python
       - name: ruff check
-        run: ruff check core/ tests/
+        run: ruff check core/ api/ tests/ sdk/python/
       - name: ruff format --check
-        run: ruff format --check core/ tests/
+        run: ruff format --check core/ api/ tests/ sdk/python/
 
   test-unit:
     name: Unit tests
@@ -42,8 +43,9 @@ jobs:
         run: |
           pip install -r requirements-dev.txt
           pip install -e .
+          pip install -e sdk/python
       - name: pytest tests/unit
-        run: pytest tests/unit/ -v --cov=core --cov-report=term-missing
+        run: pytest tests/unit/ -v --cov=core --cov=api --cov=metaworkers --cov-report=term-missing
 
   test-integration:
     name: Integration tests (Postgres + pgvector via testcontainers)
@@ -58,5 +60,6 @@ jobs:
         run: |
           pip install -r requirements-dev.txt -r requirements-api.txt
           pip install -e .
+          pip install -e sdk/python
       - name: pytest tests/integration
-        run: pytest tests/integration/ -v --cov=core --cov-report=term-missing
+        run: pytest tests/integration/ -v --cov=core --cov=api --cov=metaworkers --cov-report=term-missing
