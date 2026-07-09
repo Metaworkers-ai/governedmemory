@@ -5,7 +5,7 @@
 
 A governed memory layer for enterprise AI agents. Every memory record carries provenance, trust labels, purpose bindings, and a tamper-evident audit trail. Agents read only what they're allowed to read.
 
-**Current status:** E1 + E2 + E3 + E4 complete — core data models, Postgres+pgvector store, a Write Governor pipeline (injection scanning + dedup), a governed Retrieval Engine (hybrid search + a real privilege gate), and a Policy Engine (purpose-binding + privileged-action evaluation) sit in front of every write and every read. A self-hosted REST API (E7, in progress) now covers memory/retrieve/quarantine/delete/audit; provenance and cascade-delete wait on E6's provenance graph.
+**Current status:** E1 + E2 + E3 + E4 complete — core data models, Postgres+pgvector store, a Write Governor pipeline (injection scanning + dedup), a governed Retrieval Engine (hybrid search + a real privilege gate), and a Policy Engine (purpose-binding + privileged-action evaluation) sit in front of every write and every read. E7 (in progress) adds a self-hosted REST API covering memory/retrieve/quarantine/delete/audit, plus a thin `metaworkers` Python client on top; provenance and cascade-delete wait on E6's provenance graph.
 
 Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for setup and how to pick up an epic, [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community guidelines, and [SECURITY.md](SECURITY.md) to report a vulnerability.
 
@@ -101,6 +101,34 @@ curl -X POST http://localhost:8000/v1/memory \
 ```
 
 Or bring up server + database together: `docker compose -f deploy/docker-compose.yml up -d`.
+
+### Python SDK (`metaworkers`)
+
+A thin client for the REST API above — no third-party dependencies (stdlib `urllib.request` only), and no dependency on this repo's `core`/`api` packages, so installing it doesn't pull in Postgres/FastAPI/etc.
+
+```bash
+pip install -e sdk/python   # not yet published to PyPI
+```
+
+```python
+from metaworkers import GovernedMemory, Source
+
+mem = GovernedMemory(base_url="http://localhost:8000", api_key="some-secret-key")
+
+mem.write(
+    customer_id="cust-1", agent_id="cx-1", session_id="s-1",
+    content="customer prefers email contact",
+    source=Source(type="user", ref="msg-1001", confidence=0.9),
+    purpose=["cx_support"],
+)
+
+results = mem.retrieve(
+    query="how does this customer want to be contacted?",
+    agent_id="cx-1", session_id="s-1", purpose="cx_support", k=5,
+)
+```
+
+Any non-2xx response raises `metaworkers.GovernedMemoryError` with `.status_code`/`.detail`. See [sdk/python/README.md](sdk/python/README.md) for the full method list.
 
 ---
 
@@ -664,7 +692,7 @@ governedmemory/
 |---|---|
 | E5 | Detection — injection classifier (precision/recall tracked) |
 | E6 | Audit Graph — cascade purge, provenance tree, hash-chain verifier |
-| E7 | Python SDK + FastAPI `/v1/` REST API — server + 4/6 routes now available, self-hosted via Docker; provenance/cascade-delete pending E6 |
+| E7 | Python SDK + FastAPI `/v1/` REST API — both now available (server: 4/6 routes, self-hosted via Docker; `metaworkers` thin client on top); provenance/cascade-delete pending E6 |
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for how to pick up an epic.
 

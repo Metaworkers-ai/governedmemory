@@ -126,6 +126,16 @@ governedmemory/
 │   └── policy_engine/          ← Policy Engine (E4) — runs inside retrieve()/check_privilege()
 │       └── evaluator.py         ← Tenant-level purpose-binding + privileged-action evaluation
 │
+├── api/                        ← FastAPI REST server (E7) — wraps core/ behind /v1/*
+│   ├── main.py                  ← App + routes: memory, retrieve, quarantine, delete, audit, provenance
+│   ├── auth.py                  ← Per-tenant API key resolution (GOVERNEDMEMORY_API_KEYS)
+│   ├── schemas.py                ← Request bodies (no tenant_id field -- resolved from the API key)
+│   └── deps.py                  ← MemoryStore singleton, built at startup
+│
+├── sdk/python/                  ← metaworkers: thin HTTP client for the API server (E7)
+│   └── metaworkers/
+│       └── client.py            ← GovernedMemory class -- stdlib-only, no core/ dependency, own pyproject.toml
+│
 ├── frontend/
 │   └── app.py                  ← Streamlit UI — try the store end-to-end in a browser
 │
@@ -135,7 +145,8 @@ governedmemory/
 │   └── categorize_demo.py       ← Readiness report: taint/source/purpose breakdown, audit chain check
 │
 ├── deploy/
-│   ├── docker-compose.yml      ← Local Postgres+pgvector
+│   ├── docker-compose.yml      ← Local Postgres+pgvector, and (E7) the api service
+│   ├── Dockerfile               ← API server image (E7)
 │   └── .env.example            ← Environment variable template
 │
 ├── tests/
@@ -158,8 +169,6 @@ core/
 ├── detection/                  ← E5: injection scanner + taint classifier
 └── audit/                      ← E6: provenance graph + cascade purge
 
-sdk/python/                     ← E7: GovernedMemory SDK
-api/                            ← E7: FastAPI /v1/* routes
 adapters/                       ← E8: LangGraph, Mem0 shims
 ui/                             ← E9: React provenance visualizer
 benchmark/                      ← E10: poisoning attack library

@@ -1,0 +1,5 @@
+extend = "../../pyproject.toml"
+
+# Override: this package supports 3.8+ (it's stdlib-only, unlike core/ which
+# needs 3.11 for datetime.UTC etc.) -- don't let ruff suggest 3.11-only idioms.
+target-version = "py38"
