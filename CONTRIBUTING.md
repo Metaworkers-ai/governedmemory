@@ -123,8 +123,13 @@ governedmemory/
 │   ├── retrieval_engine/       ← Retrieval Engine (E3) — runs inside MemoryStore.retrieve()
 │   │   ├── fusion.py            ← Reciprocal rank fusion (vector + lexical)
 │   │   └── privilege_gate.py    ← Taint + record-level purpose enforcement on read
-│   └── policy_engine/          ← Policy Engine (E4) — runs inside retrieve()/check_privilege()
-│       └── evaluator.py         ← Tenant-level purpose-binding + privileged-action evaluation
+│   ├── policy_engine/          ← Policy Engine (E4) — runs inside retrieve()/check_privilege()
+│   │   └── evaluator.py         ← Tenant-level purpose-binding + privileged-action evaluation
+│   └── detection/               ← Detection (E5) — score_injection() wired into MemoryStore.write()
+│       ├── classifier.py        ← InjectionClassifier (trained Naive Bayes, pure Python, no ML deps)
+│       ├── dataset.py           ← Bundled labeled examples + deterministic train/test split
+│       ├── metrics.py           ← precision/recall/F1 evaluation for any scorer
+│       └── scanner.py           ← score_injection() — DETECTION_BACKEND-selectable heuristic/classifier/ensemble
 │
 ├── frontend/
 │   └── app.py                  ← Streamlit UI — try the store end-to-end in a browser
@@ -132,7 +137,9 @@ governedmemory/
 ├── scripts/
 │   ├── demo_data.py             ← Shared demo dataset (one tenant, five customers, 50 memories, one policy)
 │   ├── seed_demo.py             ← Populate the demo tenant
-│   └── categorize_demo.py       ← Readiness report: taint/source/purpose breakdown, audit chain check
+│   ├── categorize_demo.py       ← Readiness report: taint/source/purpose breakdown, audit chain check
+│   ├── train_detection.py       ← Train + save an E5 classifier artifact
+│   └── eval_detection.py        ← Precision/recall/F1 report across E5's detection backends
 │
 ├── deploy/
 │   ├── docker-compose.yml      ← Local Postgres+pgvector
@@ -155,7 +162,6 @@ governedmemory/
 
 ```
 core/
-├── detection/                  ← E5: injection scanner + taint classifier
 └── audit/                      ← E6: provenance graph + cascade purge
 
 sdk/python/                     ← E7: GovernedMemory SDK
@@ -223,6 +229,8 @@ These tests verify the definition of done across epics:
 - Content-based injection tainting independent of `source_type`, dedup/supersede on duplicate writes (E2)
 - `retrieve()` excludes untrusted/quarantined by default, enforces purpose binding, respects `k`, emits an audit event (E3)
 - `get_policy()`/`upsert_policy()` roundtrip, `retrieve()` respects a configured purpose binding, `check_privilege()` denies untrusted memories for privileged actions and emits a `policy_decision` audit event (E4)
+
+E5 (`core/detection/`) is pure Python with no DB dependency, so its coverage lives entirely in `tests/unit/test_detection.py`: classifier train/predict/save/load, precision/recall/F1 computation, and all three `score_injection()` backends (`heuristic`/`classifier`/`ensemble`) — including that the default `heuristic` backend is byte-identical to E2's `scan_for_injection()`, so installing E5 doesn't change `MemoryStore.write()`'s behavior unless `DETECTION_BACKEND` is set.
 
 ### Full suite with coverage
 

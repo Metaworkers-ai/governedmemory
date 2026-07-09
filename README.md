@@ -5,7 +5,7 @@
 
 A governed memory layer for enterprise AI agents. Every memory record carries provenance, trust labels, purpose bindings, and a tamper-evident audit trail. Agents read only what they're allowed to read.
 
-**Current status:** E1 + E2 + E3 + E4 complete — core data models, Postgres+pgvector store, a Write Governor pipeline (injection scanning + dedup), a governed Retrieval Engine (hybrid search + a real privilege gate), and a Policy Engine (purpose-binding + privileged-action evaluation) sit in front of every write and every read. No HTTP API yet (that's E7).
+**Current status:** E1 + E2 + E3 + E4 + E5 complete — core data models, Postgres+pgvector store, a Write Governor pipeline (injection scanning + dedup), a governed Retrieval Engine (hybrid search + a real privilege gate), a Policy Engine (purpose-binding + privileged-action evaluation), and a Detection module (trained injection classifier with tracked precision/recall) sit in front of every write and every read. No HTTP API yet (that's E7).
 
 Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for setup and how to pick up an epic, [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community guidelines, and [SECURITY.md](SECURITY.md) to report a vulnerability.
 
@@ -67,6 +67,24 @@ The `Policy` model (`core/models/policy.py`) existed since E1 — a `policy` tab
 | Retrieval integration | `MemoryStore.retrieve()` | Now also applies `filter_by_purpose_binding()` after E3's privilege gate — a no-op until a policy with purpose bindings is actually configured, so existing behavior is unchanged unless you opt in |
 
 Zero configuration still gets you something: the default `PrivilegeRules` requires trust for `send_email`/`refund`/`escalate`, so `check_privilege(memory_id, tenant_id, "refund", ...)` on an untrusted or quarantined memory is denied out of the box, no policy setup needed.
+
+---
+
+## What's in E5
+
+E2's injection scanner (`core/write_governor/injection_scanner.py`) is a fixed set of hand-written regex patterns — fast and explainable, but its recall is bounded by whatever someone thought to write a pattern for, and there was no principled way to measure precision/recall against it. E5 adds a trained classifier and the tooling to measure it, without changing E2's default behavior.
+
+| Component | File | What it does |
+|---|---|---|
+| Classifier | `core/detection/classifier.py` | `InjectionClassifier` — a multinomial Naive Bayes bag-of-words classifier, pure Python (stdlib only, no numpy/sklearn/torch). `train()` fits on any list of labeled examples; `predict_proba()` returns P(injection) in [0, 1]; `save()`/`load()` round-trip through human-readable JSON. `get_default_classifier()` trains once in-process from the bundled dataset — zero setup required. |
+| Dataset | `core/detection/dataset.py` | A small labeled dataset (injection + benign) in the same CX/sales/billing domain as `scripts/demo_data.py`, plus a deterministic stratified `split_examples()` for train/held-out evaluation. |
+| Metrics | `core/detection/metrics.py` | `evaluate()` — precision/recall/F1 for any scorer against a labeled set at a given threshold. `evaluate_at_thresholds()` sweeps several thresholds at once. |
+| Pluggable scorer | `core/detection/scanner.py` | `score_injection()` — same `(score, labels)` shape as E2's `scan_for_injection()`, selectable via the `DETECTION_BACKEND` env var: `heuristic` (default — byte-identical to E2, so nothing changes unless you opt in), `classifier` (trained model only), or `ensemble` (both, combined via the same noisy-OR E2 uses internally). |
+| Write Governor integration | `MemoryStore.write()` | Now calls `score_injection()` instead of `scan_for_injection()` directly — the injection-scoring step of the pipeline is backend-pluggable, everything downstream (tainting, `INJECTION_THRESHOLD`, audit) is unchanged. |
+
+Try it: `python scripts/eval_detection.py` prints a precision/recall/F1 table for the heuristic scanner, the trained classifier, and the ensemble, all against the same held-out split — no `DATABASE_URL` or Docker needed. `python scripts/train_detection.py` saves a reusable model artifact if you want one (point `DETECTION_MODEL_PATH` at it instead of always retraining the bundled default).
+
+This is a small, illustrative OSS default, not a production-grade classifier — anyone deploying this for real should train `InjectionClassifier` on their own labeled traffic.
 
 ---
 
@@ -584,8 +602,13 @@ governedmemory/
 │   ├── retrieval_engine/   ← Retrieval Engine (E3)
 │   │   ├── fusion.py             ← Reciprocal rank fusion (vector + lexical)
 │   │   └── privilege_gate.py     ← Taint + record-level purpose enforcement on read
-│   └── policy_engine/      ← Policy Engine (E4)
-│       └── evaluator.py          ← Tenant-level purpose-binding + privileged-action evaluation
+│   ├── policy_engine/      ← Policy Engine (E4)
+│   │   └── evaluator.py          ← Tenant-level purpose-binding + privileged-action evaluation
+│   └── detection/          ← Detection (E5)
+│       ├── classifier.py         ← InjectionClassifier (trained Naive Bayes, pure Python)
+│       ├── dataset.py            ← Bundled labeled examples + train/test split
+│       ├── metrics.py            ← Precision/recall/F1 evaluation
+│       └── scanner.py            ← score_injection() — pluggable heuristic/classifier/ensemble backend
 ├── deploy/
 │   ├── docker-compose.yml  ← Local Postgres+pgvector
 │   └── .env.example
@@ -594,9 +617,11 @@ governedmemory/
 ├── scripts/
 │   ├── demo_data.py        ← Shared demo dataset (one tenant, five customers, 50 memories, one policy)
 │   ├── seed_demo.py        ← Populate the demo tenant
-│   └── categorize_demo.py  ← Readiness report before a live demo
+│   ├── categorize_demo.py  ← Readiness report before a live demo
+│   ├── train_detection.py  ← Train + save an E5 classifier artifact
+│   └── eval_detection.py   ← Precision/recall/F1 report for E5's detection backends
 ├── tests/
-│   ├── unit/               ← 75 tests, no Docker
+│   ├── unit/               ← 102 tests, no Docker
 │   └── integration/        ← 41 tests, needs Docker
 ├── CONTRIBUTING.md
 ├── CODE_OF_CONDUCT.md
@@ -624,11 +649,10 @@ governedmemory/
 
 ---
 
-## What's next (E5–E7)
+## What's next (E6–E7)
 
 | Epic | What it adds |
 |---|---|
-| E5 | Detection — injection classifier (precision/recall tracked) |
 | E6 | Audit Graph — cascade purge, provenance tree, hash-chain verifier |
 | E7 | Python SDK + FastAPI `/v1/` REST API |
 

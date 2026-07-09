@@ -26,6 +26,7 @@ import psycopg2
 import psycopg2.extras
 from pgvector.psycopg2 import register_vector
 
+from core.detection import score_injection
 from core.memory_store.embeddings import EmbeddingProvider
 from core.models.audit_event import AuditDecision, AuditOp, AuditOutcome
 from core.models.memory_record import (
@@ -42,7 +43,7 @@ from core.models.memory_record import (
 from core.models.policy import Policy, PrivilegeRules, PurposeBinding
 from core.policy_engine import evaluate_privileged_action, filter_by_purpose_binding
 from core.retrieval_engine import apply_privilege_gate, reciprocal_rank_fusion
-from core.write_governor import find_duplicate, scan_for_injection
+from core.write_governor import find_duplicate
 
 _UNTRUSTED_SOURCE_TYPES = {SourceType.UNTRUSTED_WEB, SourceType.UNTRUSTED_EMAIL}
 _INJECTION_THRESHOLD = float(os.getenv("INJECTION_THRESHOLD", "0.7"))
@@ -214,10 +215,15 @@ class MemoryStore:
         """
         Persist a new memory through the Write Governor pipeline (E2):
         provenance -> taint -> injection scan -> dedup -> embed -> persist.
+
+        The injection scan itself is E5-pluggable: `score_injection()`
+        defaults to E2's heuristic regex scanner but can be switched to a
+        trained classifier (or an ensemble of both) via the
+        DETECTION_BACKEND env var — see core/detection/scanner.py.
         """
         _require_tenant(req.tenant_id)
 
-        injection_score, injection_labels = scan_for_injection(req.content)
+        injection_score, injection_labels = score_injection(req.content)
         source_untrusted = req.provenance.source_type in _UNTRUSTED_SOURCE_TYPES
         injection_flagged = injection_score >= _INJECTION_THRESHOLD
 
