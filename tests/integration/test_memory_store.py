@@ -430,6 +430,73 @@ class TestAuditLog:
                 f"Hash chain broken at event {i}: prev_hash={rows[i][1]} != hash={rows[i - 1][0]}"
             )
 
+    def test_concurrent_writes_produce_a_valid_hash_chain(self, migrated_store, migrated_dsn):
+        """
+        Regression test: _audit() used to read "last hash" on its own,
+        separate connection with no locking, so N concurrent writes for the
+        same tenant could all read the same prev_hash and fork the chain.
+        Firing writes from a thread barrier maximizes real overlap; the
+        advisory lock in _audit_in_tx() should still serialize them into one
+        strictly ordered chain with no forks and no gaps.
+
+        Verifies the chain by following hash -> prev_hash links rather than
+        trusting `ORDER BY ts`: NOW() (and hence `ts`) is fixed at
+        transaction *start*, not statement execution time, so under
+        concurrent transactions "who started first" and "who actually
+        acquired the lock and inserted first" can disagree. The links
+        themselves are the actual claim the chain makes; walking them is the
+        direct way to check it holds, independent of timestamp ordering.
+        """
+        import threading
+
+        import psycopg2
+
+        tenant = "tenant-audit-concurrency"
+        n = 8
+        barrier = threading.Barrier(n)
+
+        def _write(i: int) -> None:
+            barrier.wait()  # release all n threads at (as close to) the same instant
+            migrated_store.write(_req(tenant, content=f"concurrent memory {i}"))
+
+        threads = [threading.Thread(target=_write, args=(i,)) for i in range(n)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        conn = psycopg2.connect(migrated_dsn)
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT hash, prev_hash FROM audit WHERE tenant_id = %s AND op = 'write'",
+                (tenant,),
+            )
+            rows = cur.fetchall()
+        conn.close()
+
+        assert len(rows) == n, f"expected {n} write audit events, got {len(rows)}"
+
+        # Exactly one row should chain onto the empty root, and every hash
+        # should be claimed as a prev_hash by exactly one other row -- i.e.
+        # this is one straight line, not a fork (two rows sharing a
+        # prev_hash) or a break (a hash nothing points to as its prev_hash).
+        next_by_prev_hash = {}
+        for hash_, prev_hash in rows:
+            assert prev_hash not in next_by_prev_hash, (
+                f"two events share prev_hash={prev_hash} -- the chain forked"
+            )
+            next_by_prev_hash[prev_hash] = hash_
+
+        current = ""
+        visited = 0
+        while current in next_by_prev_hash:
+            current = next_by_prev_hash[current]
+            visited += 1
+        assert visited == n, (
+            f"followed the chain from the empty root through {visited} of {n} events -- "
+            "broken partway, likely two writes racing on 'last hash'"
+        )
+
 
 # ============================================================
 # Vector search (basic smoke test — NullEmbeddingProvider returns zero vectors)

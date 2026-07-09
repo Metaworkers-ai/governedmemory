@@ -6,7 +6,8 @@
 # ── Setup ─────────────────────────────────────────────────────────────────────
 
 install:
-	pip install -e ".[dev]" -r requirements-dev.txt
+	pip install -r requirements-dev.txt
+	pip install -e .
 
 install-embed:
 	pip install -r requirements-embed-local.txt
