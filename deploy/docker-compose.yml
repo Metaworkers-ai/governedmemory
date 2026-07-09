@@ -28,6 +28,21 @@ services:
       retries: 10
     restart: unless-stopped
 
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://mw:mw_dev_password@postgres:5432/governedmemory
+      # Override with your own tenant:key pairs — this default is dev-only.
+      GOVERNEDMEMORY_API_KEYS: ${GOVERNEDMEMORY_API_KEYS:-demo:demo-key}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   pgdata:
     driver: local
