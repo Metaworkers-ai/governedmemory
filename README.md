@@ -5,7 +5,7 @@
 
 A governed memory layer for enterprise AI agents. Every memory record carries provenance, trust labels, purpose bindings, and a tamper-evident audit trail. Agents read only what they're allowed to read.
 
-**Current status:** E1 + E2 + E3 + E4 complete — core data models, Postgres+pgvector store, a Write Governor pipeline (injection scanning + dedup), a governed Retrieval Engine (hybrid search + a real privilege gate), and a Policy Engine (purpose-binding + privileged-action evaluation) sit in front of every write and every read. No HTTP API yet (that's E7).
+**Current status:** E1 + E2 + E3 + E4 complete — core data models, Postgres+pgvector store, a Write Governor pipeline (injection scanning + dedup), a governed Retrieval Engine (hybrid search + a real privilege gate), and a Policy Engine (purpose-binding + privileged-action evaluation) sit in front of every write and every read. A self-hosted REST API (E7, in progress) now covers memory/retrieve/quarantine/delete/audit; provenance and cascade-delete wait on E6's provenance graph.
 
 Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for setup and how to pick up an epic, [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community guidelines, and [SECURITY.md](SECURITY.md) to report a vulnerability.
 
@@ -67,6 +67,40 @@ The `Policy` model (`core/models/policy.py`) existed since E1 — a `policy` tab
 | Retrieval integration | `MemoryStore.retrieve()` | Now also applies `filter_by_purpose_binding()` after E3's privilege gate — a no-op until a policy with purpose bindings is actually configured, so existing behavior is unchanged unless you opt in |
 
 Zero configuration still gets you something: the default `PrivilegeRules` requires trust for `send_email`/`refund`/`escalate`, so `check_privilege(memory_id, tenant_id, "refund", ...)` on an untrusted or quarantined memory is denied out of the box, no policy setup needed.
+
+---
+
+## REST API (E7) — self-hosted
+
+`core/` (this repo's engine) now sits behind a FastAPI server instead of being importable directly. This is a deliberate architecture choice: `pip install` gets you a thin client that talks to a server you run yourself (like the `stripe` SDK), not an embedded copy of the governance logic (like `numpy`) — so a hosted, managed version can be offered later without changing how self-hosting works today.
+
+| Route | Maps to |
+|---|---|
+| `POST /v1/memory` | `MemoryStore.write()` |
+| `POST /v1/retrieve` | `MemoryStore.retrieve()` |
+| `POST /v1/quarantine` | `MemoryStore.quarantine()` |
+| `DELETE /v1/memory/{id}` | `MemoryStore.delete()` (non-cascade only — `?cascade=true` returns 501 until E6) |
+| `GET /v1/audit` | `MemoryStore.list_audit()` |
+| `GET /v1/provenance/{id}` | not built yet — returns 501 (needs E6's provenance graph traversal) |
+
+Auth is per-tenant API keys via `GOVERNEDMEMORY_API_KEYS="tenant_id:key,..."` — every route resolves `tenant_id` from the caller's key, never from the request body, so one tenant's key can't act on another tenant's memories.
+
+Run it:
+
+```bash
+make db-up
+make install-api
+export DATABASE_URL=postgresql://mw:mw_dev_password@localhost:5432/governedmemory
+export GOVERNEDMEMORY_API_KEYS="t1:some-secret-key"
+make api
+
+curl -X POST http://localhost:8000/v1/memory \
+  -H "Authorization: Bearer some-secret-key" -H "Content-Type: application/json" \
+  -d '{"customer_id":"cust-1","agent_id":"cx-1","session_id":"s-1","content":"prefers email",
+       "provenance":{"source_type":"user","source_ref":"msg-1","confidence":0.9}}'
+```
+
+Or bring up server + database together: `docker compose -f deploy/docker-compose.yml up -d`.
 
 ---
 
@@ -630,7 +664,7 @@ governedmemory/
 |---|---|
 | E5 | Detection — injection classifier (precision/recall tracked) |
 | E6 | Audit Graph — cascade purge, provenance tree, hash-chain verifier |
-| E7 | Python SDK + FastAPI `/v1/` REST API |
+| E7 | Python SDK + FastAPI `/v1/` REST API — server + 4/6 routes now available, self-hosted via Docker; provenance/cascade-delete pending E6 |
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for how to pick up an epic.
 

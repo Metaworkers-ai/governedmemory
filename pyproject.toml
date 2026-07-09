@@ -24,7 +24,7 @@ dependencies = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["core*"]
+include = ["core*", "api*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

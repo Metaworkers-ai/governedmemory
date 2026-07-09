@@ -1,0 +1,4 @@
+# API server dependencies — required to run the FastAPI REST server (E7)
+# Install: pip install -r requirements-api.txt
+fastapi>=0.115.0,<1.0
+uvicorn[standard]>=0.32.0

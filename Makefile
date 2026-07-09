@@ -1,7 +1,7 @@
 # Makefile — convenience commands for local development
 # On Windows without make: use Git Bash, WSL, or run commands directly.
 
-.PHONY: install install-embed db-up db-down test-unit test-integration test lint
+.PHONY: install install-embed install-api api db-up db-down test-unit test-integration test lint
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
 
@@ -10,6 +10,14 @@ install:
 
 install-embed:
 	pip install -r requirements-embed-local.txt
+
+install-api:
+	pip install -r requirements-api.txt
+
+# ── API server (E7) ───────────────────────────────────────────────────────────
+
+api:
+	uvicorn api.main:app --reload --port 8000
 
 # ── Database ──────────────────────────────────────────────────────────────────
 
