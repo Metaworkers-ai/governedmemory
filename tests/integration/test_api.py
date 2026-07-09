@@ -139,13 +139,23 @@ class TestQuarantineAndDelete:
 
 class TestAudit:
     def test_audit_lists_events_for_the_authenticated_tenant_only(self, client):
-        client.post("/v1/memory", json=_write_body(), headers=_auth(KEY_A))
+        write_resp = client.post("/v1/memory", json=_write_body(), headers=_auth(KEY_A))
+        memory_id = write_resp.json()["id"]
 
         resp = client.get("/v1/audit", headers=_auth(KEY_A))
         assert resp.status_code == 200
         events = resp.json()
         assert len(events) >= 1
-        assert all(e["tenant_id"] == TENANT_A for e in events)
+        assert any(memory_id in e["memory_ids"] for e in events)
+
+        # list_audit() scopes by tenant_id inside the query itself (there's no
+        # tenant_id column in the response -- every row it returns is already
+        # guaranteed to belong to the caller's tenant), so isolation is
+        # verified here by checking tenant B's audit log never mentions
+        # tenant A's memory_id, rather than asserting a key that doesn't exist.
+        other_resp = client.get("/v1/audit", headers=_auth(KEY_B))
+        assert other_resp.status_code == 200
+        assert all(memory_id not in e["memory_ids"] for e in other_resp.json())
 
 
 class TestNotYetImplemented:
