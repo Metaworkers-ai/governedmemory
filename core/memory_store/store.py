@@ -26,6 +26,14 @@ import psycopg2
 import psycopg2.extras
 from pgvector.psycopg2 import register_vector
 
+from core.audit import (
+    AuditVerificationResult,
+    CascadePurgePlan,
+    ProvenanceGraph,
+    build_provenance_graph,
+    plan_cascade_purge,
+    verify_chain,
+)
 from core.detection import score_injection
 from core.memory_store.embeddings import EmbeddingProvider
 from core.models.audit_event import AuditDecision, AuditOp, AuditOutcome
@@ -593,7 +601,9 @@ class MemoryStore:
         return updated
 
     def delete(self, memory_id: str, tenant_id: str) -> bool:
-        """Hard-delete a memory (GDPR right-to-erasure). Cascade purge added in E6."""
+        """Hard-delete a single memory (GDPR right-to-erasure). Does not
+        touch anything derived from it — use purge_cascade() (E6) when
+        derivatives should be removed too."""
         _require_tenant(tenant_id)
         with self._conn() as conn:
             with conn.cursor() as cur:
@@ -612,6 +622,118 @@ class MemoryStore:
                 AuditDecision(outcome=AuditOutcome.ALLOW, reason="hard delete"),
             )
         return deleted
+
+    # ------------------------------------------------------------------
+    # Audit Graph: provenance + cascade purge (E6)
+    # ------------------------------------------------------------------
+
+    def _fetch_provenance_edges(self, tenant_id: str) -> list[tuple[str, list[str]]]:
+        """(id, parent_ids) for every memory in a tenant — the raw material
+        for building a ProvenanceGraph. Tenant-scoped, so cross-tenant
+        parent_ids (which should never be written, but nothing enforces it
+        at write time) simply won't resolve — see ProvenanceGraph's
+        leaf-tolerance for out-of-set ids."""
+        _require_tenant(tenant_id)
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id, parent_ids FROM memory WHERE tenant_id = %s",
+                    (tenant_id,),
+                )
+                rows = cur.fetchall()
+        return [(str(rid), _jsonb_list(parent_ids)) for rid, parent_ids in rows]
+
+    def get_provenance_graph(self, tenant_id: str) -> ProvenanceGraph:
+        """
+        Build the full provenance graph for a tenant — every memory's
+        parent_ids, as ancestor/descendant edges. Useful for a UI that wants
+        to render more than one memory's lineage without re-querying per
+        node; get_provenance() below is the single-memory convenience
+        wrapper most callers want.
+        """
+        edges = self._fetch_provenance_edges(tenant_id)
+        return build_provenance_graph(edges)
+
+    def get_provenance(self, memory_id: str, tenant_id: str) -> dict:
+        """
+        Lineage for one memory: what it was derived from (ancestors) and
+        what has been derived from it (descendants), each transitively.
+        Read-only introspection — like vector_search()/lexical_search(),
+        this does not emit an audit event (nothing is disclosed or gated
+        that retrieve()/get() wouldn't already reveal one hop at a time;
+        this just saves the caller from walking parent_ids by hand).
+        """
+        _require_tenant(tenant_id)
+        graph = self.get_provenance_graph(tenant_id)
+        return {
+            "memory_id": memory_id,
+            "ancestors": graph.ancestors(memory_id),
+            "descendants": graph.descendants(memory_id),
+        }
+
+    def preview_cascade_purge(self, memory_id: str, tenant_id: str) -> CascadePurgePlan:
+        """
+        Preview what purge_cascade(memory_id) would delete, without
+        deleting anything — for a confirmation dialog ("this will also
+        remove 4 derived memories") before committing to the irreversible
+        version below.
+        """
+        _require_tenant(tenant_id)
+        graph = self.get_provenance_graph(tenant_id)
+        return plan_cascade_purge(graph, memory_id)
+
+    def purge_cascade(
+        self,
+        memory_id: str,
+        tenant_id: str,
+        reason: str = "cascade purge",
+        agent_id: str = "system",
+        session_id: str = "system",
+    ) -> CascadePurgePlan:
+        """
+        Hard-delete `memory_id` and everything transitively derived from it
+        (its full descendant set in the provenance graph), in one
+        transaction, and emit a single AuditOp.PURGE event listing every id
+        removed. Use this instead of delete() for GDPR right-to-erasure
+        (so a customer's data can't survive via its own derivatives) or
+        when cleaning up a memory discovered to be poisoned after the fact
+        (so anything built on top of it goes with it).
+
+        Idempotent-ish: purging an id with no descendants behaves exactly
+        like delete() (a plan of just [memory_id]). Purging an id that no
+        longer exists returns a plan whose all_ids still get attempted
+        against DELETE, which simply affects 0 rows for that id — safe to
+        retry.
+        """
+        _require_tenant(tenant_id)
+        plan = self.preview_cascade_purge(memory_id, tenant_id)
+
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM memory WHERE tenant_id = %s AND id = ANY(%s::uuid[])",
+                    (tenant_id, plan.all_ids),
+                )
+                deleted_count = cur.rowcount
+
+        full_reason = reason
+        if plan.descendant_count:
+            full_reason += (
+                f"; root {memory_id} + {plan.descendant_count} descendant(s) "
+                f"cascade-purged ({deleted_count} row(s) actually deleted)"
+            )
+        else:
+            full_reason += f"; no descendants, equivalent to a single delete of {memory_id}"
+
+        self._audit(
+            tenant_id,
+            agent_id,
+            session_id,
+            AuditOp.PURGE,
+            plan.all_ids,
+            AuditDecision(outcome=AuditOutcome.ALLOW, reason=full_reason),
+        )
+        return plan
 
     def get_stats(self, tenant_id: str) -> dict:
         _require_tenant(tenant_id)
@@ -636,13 +758,31 @@ class MemoryStore:
         with self._conn() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(
-                    """SELECT id, ts, agent_id, session_id, op, memory_ids,
+                    """SELECT id, tenant_id, ts, agent_id, session_id, op, memory_ids,
                               outcome, reason, policy_id, hash, prev_hash
                        FROM audit WHERE tenant_id = %s
                        ORDER BY ts DESC LIMIT %s""",
                     (tenant_id, limit),
                 )
                 return [dict(r) for r in cur.fetchall()]
+
+    def verify_audit_chain(self, tenant_id: str, limit: int = 10_000) -> AuditVerificationResult:
+        """
+        Formally verify a tenant's audit chain (E6): recompute every
+        event's hash from its own stored fields and confirm both that it
+        matches the recorded hash (no in-place tamper) and that prev_hash
+        correctly links to the previous event (no deletion/reordering).
+
+        This supersedes the linkage-only check scripts/categorize_demo.py
+        used to do by hand — see core/audit/verifier.py for why that
+        distinction matters. `limit` bounds how many recent events are
+        checked; pass a number >= total event count for a full-history
+        verification.
+        """
+        _require_tenant(tenant_id)
+        events = self.list_audit(tenant_id, limit=limit)
+        events = list(reversed(events))  # list_audit is newest-first; verify oldest-first
+        return verify_chain(events)
 
     def _audit(
         self,
@@ -668,13 +808,17 @@ class MemoryStore:
                 payload = f"{event_id}{tenant_id}{ts}{op.value}{json.dumps(sorted(memory_ids))}{decision.outcome.value}"
                 current_hash = hashlib.sha256((prev_hash + payload).encode()).hexdigest()
 
+                # `ts` is stored verbatim (not a separate NOW()) so that E6's
+                # verify_chain() can recompute this exact hash later from
+                # nothing but the persisted row — see core/audit/verifier.py.
                 cur.execute(
                     """INSERT INTO audit (id, tenant_id, ts, agent_id, session_id, op,
                                           memory_ids, outcome, reason, policy_id, hash, prev_hash)
-                       VALUES (%s, %s, NOW(), %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                     (
                         event_id,
                         tenant_id,
+                        ts,
                         agent_id,
                         session_id,
                         op.value,

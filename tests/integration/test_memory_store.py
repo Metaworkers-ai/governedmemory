@@ -713,3 +713,194 @@ class TestPolicyEngine:
         assert row is not None
         assert row[0] == "policy_decision"
         assert row[1] == "deny"
+
+
+# ============================================================
+# E6 Definition of Done: Audit Graph (provenance + cascade purge + verifier)
+# ============================================================
+
+
+class TestProvenanceGraph:
+    def test_get_provenance_reports_ancestors(self, migrated_store):
+        tenant = "tenant-e6-ancestors"
+        parent = migrated_store.write(
+            _req(tenant, customer_id="cust-1", content="original support ticket")
+        )
+        child_req = _req(tenant, customer_id="cust-1", content="agent summary of ticket")
+        child_req.provenance.parent_ids = [parent.id]
+        child = migrated_store.write(child_req)
+
+        lineage = migrated_store.get_provenance(child.id, tenant)
+        assert lineage["ancestors"] == [parent.id]
+        assert lineage["descendants"] == []
+
+    def test_get_provenance_reports_descendants(self, migrated_store):
+        tenant = "tenant-e6-descendants"
+        parent = migrated_store.write(
+            _req(tenant, customer_id="cust-1", content="original ticket 2")
+        )
+        child_req = _req(tenant, customer_id="cust-1", content="summary of ticket 2")
+        child_req.provenance.parent_ids = [parent.id]
+        child = migrated_store.write(child_req)
+
+        lineage = migrated_store.get_provenance(parent.id, tenant)
+        assert lineage["descendants"] == [child.id]
+        assert lineage["ancestors"] == []
+
+    def test_get_provenance_transitive_chain(self, migrated_store):
+        tenant = "tenant-e6-chain"
+        a = migrated_store.write(_req(tenant, customer_id="cust-1", content="A: raw email"))
+        b_req = _req(tenant, customer_id="cust-1", content="B: extracted fact from A")
+        b_req.provenance.parent_ids = [a.id]
+        b = migrated_store.write(b_req)
+        c_req = _req(tenant, customer_id="cust-1", content="C: summary built from B")
+        c_req.provenance.parent_ids = [b.id]
+        c = migrated_store.write(c_req)
+
+        assert set(migrated_store.get_provenance(c.id, tenant)["ancestors"]) == {a.id, b.id}
+        assert set(migrated_store.get_provenance(a.id, tenant)["descendants"]) == {b.id, c.id}
+
+    def test_get_provenance_is_tenant_scoped(self, migrated_store):
+        tenant_a = "tenant-e6-iso-a"
+        tenant_b = "tenant-e6-iso-b"
+        record = migrated_store.write(_req(tenant_a, customer_id="cust-1", content="tenant a note"))
+        # A record in tenant_b cannot see into tenant_a's graph at all
+        lineage = migrated_store.get_provenance(record.id, tenant_b)
+        assert lineage["ancestors"] == []
+        assert lineage["descendants"] == []
+
+
+class TestCascadePurge:
+    def test_purge_cascade_deletes_root_and_all_descendants(self, migrated_store):
+        tenant = "tenant-e6-cascade-full"
+        a = migrated_store.write(_req(tenant, customer_id="cust-1", content="root memory"))
+        b_req = _req(tenant, customer_id="cust-1", content="derived from root")
+        b_req.provenance.parent_ids = [a.id]
+        b = migrated_store.write(b_req)
+        c_req = _req(tenant, customer_id="cust-1", content="derived from derived")
+        c_req.provenance.parent_ids = [b.id]
+        c = migrated_store.write(c_req)
+
+        plan = migrated_store.purge_cascade(a.id, tenant, reason="test cascade")
+
+        assert set(plan.all_ids) == {a.id, b.id, c.id}
+        assert migrated_store.get(a.id, tenant) is None
+        assert migrated_store.get(b.id, tenant) is None
+        assert migrated_store.get(c.id, tenant) is None
+
+    def test_purge_cascade_leaves_ancestors_untouched(self, migrated_store):
+        tenant = "tenant-e6-cascade-partial"
+        a = migrated_store.write(_req(tenant, customer_id="cust-1", content="keep me"))
+        b_req = _req(tenant, customer_id="cust-1", content="purge me")
+        b_req.provenance.parent_ids = [a.id]
+        b = migrated_store.write(b_req)
+
+        migrated_store.purge_cascade(b.id, tenant)
+
+        assert migrated_store.get(a.id, tenant) is not None  # ancestor survives
+        assert migrated_store.get(b.id, tenant) is None
+
+    def test_purge_cascade_with_no_descendants_behaves_like_single_delete(self, migrated_store):
+        tenant = "tenant-e6-cascade-leaf"
+        record = migrated_store.write(_req(tenant, customer_id="cust-1", content="lonely memory"))
+
+        plan = migrated_store.purge_cascade(record.id, tenant)
+
+        assert plan.all_ids == [record.id]
+        assert plan.descendant_count == 0
+        assert migrated_store.get(record.id, tenant) is None
+
+    def test_preview_cascade_purge_does_not_delete_anything(self, migrated_store):
+        tenant = "tenant-e6-preview"
+        a = migrated_store.write(_req(tenant, customer_id="cust-1", content="root"))
+        b_req = _req(tenant, customer_id="cust-1", content="child")
+        b_req.provenance.parent_ids = [a.id]
+        b = migrated_store.write(b_req)
+
+        plan = migrated_store.preview_cascade_purge(a.id, tenant)
+
+        assert set(plan.all_ids) == {a.id, b.id}
+        assert migrated_store.get(a.id, tenant) is not None  # nothing actually deleted
+        assert migrated_store.get(b.id, tenant) is not None
+
+    def test_purge_cascade_emits_one_audit_event_listing_every_id(
+        self, migrated_store, migrated_dsn
+    ):
+        import psycopg2
+
+        tenant = "tenant-e6-cascade-audit"
+        a = migrated_store.write(_req(tenant, customer_id="cust-1", content="audited root"))
+        b_req = _req(tenant, customer_id="cust-1", content="audited child")
+        b_req.provenance.parent_ids = [a.id]
+        b = migrated_store.write(b_req)
+
+        migrated_store.purge_cascade(a.id, tenant)
+
+        conn = psycopg2.connect(migrated_dsn)
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT memory_ids, outcome FROM audit "
+                "WHERE tenant_id = %s AND op = 'purge' ORDER BY ts DESC LIMIT 1",
+                (tenant,),
+            )
+            row = cur.fetchone()
+        conn.close()
+        assert row is not None
+        purged_ids = set(row[0])
+        assert purged_ids == {a.id, b.id}
+        assert row[1] == "allow"
+
+
+class TestAuditVerifier:
+    def test_verify_audit_chain_is_valid_after_normal_operations(self, migrated_store):
+        """This is also the regression test for E6's ts fix: before it, the
+        Python-side ts folded into each event's hash was discarded in favor
+        of a separate NOW() at INSERT time, so recomputing the hash from
+        stored data could never match — every chain would report tampered
+        even with zero actual tampering."""
+        tenant = "tenant-e6-verify-clean"
+        record = migrated_store.write(
+            _req(tenant, customer_id="cust-1", content="clean chain memory")
+        )
+        migrated_store.retrieve("clean chain", tenant, "agent-1", "sess-1", k=5)
+        migrated_store.quarantine(record.id, tenant, reason="routine check")
+
+        result = migrated_store.verify_audit_chain(tenant)
+        assert result.valid is True
+        assert result.events_checked == result.total_events
+        assert result.total_events >= 3  # write + retrieve + quarantine
+
+    def test_verify_audit_chain_detects_in_place_tamper(self, migrated_store, migrated_dsn):
+        """Directly UPDATE a stored event's outcome — something no DB
+        trigger currently blocks (see CONTRIBUTING.md: append-only by
+        convention, not enforcement) — and confirm the verifier catches it
+        even though prev_hash linkage is untouched."""
+        import psycopg2
+
+        tenant = "tenant-e6-verify-tamper"
+        migrated_store.write(_req(tenant, customer_id="cust-1", content="about to be tampered"))
+        migrated_store.write(_req(tenant, customer_id="cust-1", content="a second write"))
+
+        conn = psycopg2.connect(migrated_dsn)
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM audit WHERE tenant_id = %s ORDER BY ts ASC LIMIT 1",
+                (tenant,),
+            )
+            first_event_id = cur.fetchone()[0]
+            cur.execute(
+                "UPDATE audit SET outcome = 'deny' WHERE id = %s",
+                (first_event_id,),
+            )
+        conn.commit()
+        conn.close()
+
+        result = migrated_store.verify_audit_chain(tenant)
+        assert result.valid is False
+        assert str(result.broken_event_id) == str(first_event_id)
+        assert "modified in place" in result.reason
+
+    def test_verify_audit_chain_empty_tenant_is_valid(self, migrated_store):
+        result = migrated_store.verify_audit_chain("tenant-e6-verify-empty-" + "x" * 8)
+        assert result.valid is True
+        assert result.total_events == 0

@@ -125,11 +125,15 @@ governedmemory/
 │   │   └── privilege_gate.py    ← Taint + record-level purpose enforcement on read
 │   ├── policy_engine/          ← Policy Engine (E4) — runs inside retrieve()/check_privilege()
 │   │   └── evaluator.py         ← Tenant-level purpose-binding + privileged-action evaluation
-│   └── detection/               ← Detection (E5) — score_injection() wired into MemoryStore.write()
-│       ├── classifier.py        ← InjectionClassifier (trained Naive Bayes, pure Python, no ML deps)
-│       ├── dataset.py           ← Bundled labeled examples + deterministic train/test split
-│       ├── metrics.py           ← precision/recall/F1 evaluation for any scorer
-│       └── scanner.py           ← score_injection() — DETECTION_BACKEND-selectable heuristic/classifier/ensemble
+│   ├── detection/               ← Detection (E5) — score_injection() wired into MemoryStore.write()
+│   │   ├── classifier.py        ← InjectionClassifier (trained Naive Bayes, pure Python, no ML deps)
+│   │   ├── dataset.py           ← Bundled labeled examples + deterministic train/test split
+│   │   ├── metrics.py           ← precision/recall/F1 evaluation for any scorer
+│   │   └── scanner.py           ← score_injection() — DETECTION_BACKEND-selectable heuristic/classifier/ensemble
+│   └── audit/                   ← Audit Graph (E6) — provenance graph + cascade purge + hash-chain verifier
+│       ├── provenance_graph.py  ← ProvenanceGraph — ancestors()/descendants() over parent_ids edges
+│       ├── cascade_purge.py     ← plan_cascade_purge() — delete-set planner (root + all descendants)
+│       └── verifier.py          ← verify_chain() — recomputes + checks every event's hash, not just linkage
 │
 ├── frontend/
 │   └── app.py                  ← Streamlit UI — try the store end-to-end in a browser
@@ -139,7 +143,8 @@ governedmemory/
 │   ├── seed_demo.py             ← Populate the demo tenant
 │   ├── categorize_demo.py       ← Readiness report: taint/source/purpose breakdown, audit chain check
 │   ├── train_detection.py       ← Train + save an E5 classifier artifact
-│   └── eval_detection.py        ← Precision/recall/F1 report across E5's detection backends
+│   ├── eval_detection.py        ← Precision/recall/F1 report across E5's detection backends
+│   └── verify_audit.py          ← E6: formally verify a tenant's audit chain, inspect a memory's provenance
 │
 ├── deploy/
 │   ├── docker-compose.yml      ← Local Postgres+pgvector
@@ -161,9 +166,6 @@ governedmemory/
 ### What's coming (future epics)
 
 ```
-core/
-└── audit/                      ← E6: provenance graph + cascade purge
-
 sdk/python/                     ← E7: GovernedMemory SDK
 api/                            ← E7: FastAPI /v1/* routes
 adapters/                       ← E8: LangGraph, Mem0 shims
@@ -229,8 +231,11 @@ These tests verify the definition of done across epics:
 - Content-based injection tainting independent of `source_type`, dedup/supersede on duplicate writes (E2)
 - `retrieve()` excludes untrusted/quarantined by default, enforces purpose binding, respects `k`, emits an audit event (E3)
 - `get_policy()`/`upsert_policy()` roundtrip, `retrieve()` respects a configured purpose binding, `check_privilege()` denies untrusted memories for privileged actions and emits a `policy_decision` audit event (E4)
+- `get_provenance()` reports ancestors/descendants across multi-hop chains and is tenant-scoped, `purge_cascade()` deletes a root and all its descendants (but never its ancestors) and emits one audit event listing every id removed, `verify_audit_chain()` is valid after normal operations and catches an in-place `UPDATE` on a stored event (E6)
 
 E5 (`core/detection/`) is pure Python with no DB dependency, so its coverage lives entirely in `tests/unit/test_detection.py`: classifier train/predict/save/load, precision/recall/F1 computation, and all three `score_injection()` backends (`heuristic`/`classifier`/`ensemble`) — including that the default `heuristic` backend is byte-identical to E2's `scan_for_injection()`, so installing E5 doesn't change `MemoryStore.write()`'s behavior unless `DETECTION_BACKEND` is set.
+
+E6 (`core/audit/`) is also pure Python with no DB dependency — `tests/unit/test_audit.py` covers `ProvenanceGraph` traversal (transitive ancestors/descendants, cycle safety, dangling parent_ids), `plan_cascade_purge()`'s delete-set computation, and `verify_chain()` against hand-built hash chains (intact, in-place tamper, deleted event, reordered events). The DB-integrated entry points (`MemoryStore.get_provenance()`, `.purge_cascade()`, `.verify_audit_chain()`) are covered in `tests/integration/test_memory_store.py` instead, since those need a real audit table and real memory rows to be meaningful.
 
 ### Full suite with coverage
 
@@ -394,7 +399,11 @@ Every audit event stores `hash = SHA-256(prev_hash + event_payload)`. This means
 - The chain can be verified offline (no trusted timestamp service needed)
 - False negatives (security holes) are detectable in post-incident review
 
-The audit table has no UPDATE or DELETE triggers — it is append-only by convention. E6 will add a formal verifier.
+The audit table has no UPDATE or DELETE triggers — it is append-only by convention, not by enforcement. `MemoryStore.verify_audit_chain()` (E6, `core/audit/verifier.py`) is the formal check: it recomputes each event's hash from its own stored fields and confirms it matches the recorded hash, in addition to confirming `prev_hash` links to the event before it — so an in-place `UPDATE` on an existing row is caught, not just a deleted or reordered event.
+
+That verifier only works because of an E6 fix worth knowing about if you touch `_audit()`: the hash payload folds in a `ts` string, but pre-E6, that `ts` was computed in Python for the hash while the `ts` *column* was populated by a separate `NOW()` at `INSERT` time — two different instants, so the persisted row could never reproduce the hash that was supposedly computed from it. `_audit()` now stores the exact `ts` string it hashes. If you ever change what goes into the payload, keep the stored columns and the hashed payload in sync, or verification silently becomes impossible again.
+
+`Provenance.parent_ids` (present since E1) is what E6's provenance graph and cascade purge are built on. It's plain JSONB, not a foreign key — a `parent_ids` entry pointing at a deleted or out-of-tenant record is tolerated as a leaf rather than enforced or cleaned up. `MemoryStore.purge_cascade()` deletes a record and everything transitively derived from it in one transaction, and emits one `AuditOp.PURGE` event listing every id removed; `delete()` (E1) is untouched and still removes exactly one record — use whichever matches the intent.
 
 ---
 
@@ -469,6 +478,8 @@ This adds a `Signed-off-by: Your Name <you@example.com>` trailer to the commit m
 | **agent_id** | The AI agent that wrote or retrieved a memory record. |
 | **taint** | The trust status of a memory: `trusted`, `untrusted`, or `quarantined`. |
 | **provenance** | Where a memory came from: source type, source reference, confidence score. |
+| **provenance graph** | The directed graph formed by every memory's `parent_ids` — what a memory was derived from (ancestors) and what was derived from it (descendants). |
+| **cascade purge** | Deleting a memory and everything transitively derived from it (its full descendant set), in one operation. |
 | **purpose** | What agent actions are allowed to use this memory (e.g., `cx_support`, `billing`). |
 | **privilege gate** | Read-path filter that drops `untrusted`/`quarantined` records for privileged actions. |
 | **Write Governor** | The write pipeline: provenance → injection scan → taint → purpose → dedup → embed → persist. |
