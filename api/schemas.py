@@ -42,3 +42,22 @@ class QuarantineBody(BaseModel):
 
 class SuccessResponse(BaseModel):
     success: bool
+
+
+class ProvenanceResponse(BaseModel):
+    """A memory's lineage (E6): what it was derived from and what has been
+    derived from it, each walked transitively over parent_ids."""
+
+    memory_id: str
+    ancestors: list[str]
+    descendants: list[str]
+
+
+class CascadePurgePlanResponse(BaseModel):
+    """What a cascade purge of root_id would delete (E6) -- root_id plus
+    every transitive descendant. Returned by the dry-run preview and by the
+    delete endpoint once a cascade purge has actually been applied."""
+
+    root_id: str
+    descendant_ids: list[str]
+    descendant_count: int

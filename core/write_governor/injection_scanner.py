@@ -5,8 +5,10 @@ This is a fast, explainable, rule-based scorer — not a trained classifier.
 It exists so obviously-malicious content (fake system directives, instruction
 overrides, credential exfiltration attempts) gets flagged even when it arrives
 through a nominally trusted channel, not just when the source_type itself is
-untrusted. E5 will replace/augment this with a real classifier that tracks
-precision/recall; until then, these patterns catch the common cases.
+untrusted. E5 (core/detection/) adds a trained classifier that tracks
+precision/recall and can augment or replace this scanner via the
+DETECTION_BACKEND env var — this module remains the default and is unchanged
+by E5, so these patterns keep catching the common cases on their own.
 
 Each pattern contributes a weight in [0, 1]. Multiple independent matches are
 combined via a noisy-OR (`1 - product(1 - weight_i)`) rather than a simple

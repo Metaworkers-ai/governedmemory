@@ -1,19 +1,14 @@
 """
 FastAPI REST server (E7) -- the self-hosted surface for GovernedMemory.
 
-Wraps the existing MemoryStore pipeline (E1-E4) behind the six routes from
+Wraps the existing MemoryStore pipeline (E1-E6) behind the six routes from
 the engineering plan's REST API section (Sec 5.8), plus /v1/customers and
 /v1/memories (listing -- added for the Next.js frontend's Browse page,
 since the original plan had no way to list what's stored without knowing
-a search query). Two are intentionally thin stubs for now:
-
-  - DELETE /v1/memory/{id}?cascade=true
-  - GET    /v1/provenance/{id}
-
-Both need the provenance graph traversal that's E6's job -- `parent_ids`
-already exists on every record's Provenance, but nothing populates or
-walks it yet (core/models/memory_record.py marks it "provenance graph
-edges (E6)"). Plain (non-cascade) delete works today.
+a search query). DELETE /v1/memory/{id}?cascade=true and
+GET /v1/provenance/{id} are backed by E6's provenance graph
+(core/audit/provenance_graph.py) via MemoryStore.purge_cascade() and
+MemoryStore.get_provenance().
 
 Run locally:
     make db-up
@@ -35,9 +30,16 @@ from fastapi import Depends, FastAPI, HTTPException, status
 
 from api.auth import require_tenant
 from api.deps import get_store
-from api.schemas import QuarantineBody, RetrieveBody, SuccessResponse, WriteBody
+from api.schemas import (
+    CascadePurgePlanResponse,
+    ProvenanceResponse,
+    QuarantineBody,
+    RetrieveBody,
+    SuccessResponse,
+    WriteBody,
+)
 from core.memory_store import MemoryStore, NullEmbeddingProvider, init_db
-from core.models import MemoryRecord, Provenance, WriteRequest
+from core.models import MemoryRecord, WriteRequest
 
 
 def _build_embedder():
@@ -116,17 +118,31 @@ def delete_memory(
     store: MemoryStore = Depends(get_store),
 ) -> SuccessResponse:
     if cascade:
-        raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail=(
-                "cascade purge needs E6's provenance graph traversal -- not built yet, "
-                "call without ?cascade=true for a plain delete"
-            ),
-        )
+        if store.get(memory_id, tenant_id) is None:
+            raise HTTPException(status_code=404, detail="memory not found")
+        store.purge_cascade(memory_id, tenant_id)
+        return SuccessResponse(success=True)
     found = store.delete(memory_id, tenant_id)
     if not found:
         raise HTTPException(status_code=404, detail="memory not found")
     return SuccessResponse(success=True)
+
+
+@app.get("/v1/memory/{memory_id}/cascade-preview", response_model=CascadePurgePlanResponse)
+def cascade_preview(
+    memory_id: str,
+    tenant_id: str = Depends(require_tenant),
+    store: MemoryStore = Depends(get_store),
+) -> CascadePurgePlanResponse:
+    """Dry-run preview of DELETE ?cascade=true (E6) -- what would be deleted
+    without deleting anything, for a confirmation step before calling the
+    real cascade delete."""
+    plan = store.preview_cascade_purge(memory_id, tenant_id)
+    return CascadePurgePlanResponse(
+        root_id=plan.root_id,
+        descendant_ids=plan.descendant_ids,
+        descendant_count=plan.descendant_count,
+    )
 
 
 @app.get("/v1/audit", response_model=list[dict])
@@ -162,15 +178,13 @@ def list_memories(
     return store.list_for_customer(tenant_id, customer_id)
 
 
-@app.get("/v1/provenance/{memory_id}")
+@app.get("/v1/provenance/{memory_id}", response_model=ProvenanceResponse)
 def provenance(
     memory_id: str,
     tenant_id: str = Depends(require_tenant),
-) -> Provenance:
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail=(
-            "provenance tree traversal is E6 work (parent_ids exists on every record "
-            "but nothing populates/walks it yet) -- not built yet"
-        ),
-    )
+    store: MemoryStore = Depends(get_store),
+) -> ProvenanceResponse:
+    """A memory's lineage (E6): what it was derived from (ancestors) and
+    what has been derived from it (descendants), each walked transitively
+    over parent_ids via the provenance graph."""
+    return ProvenanceResponse(**store.get_provenance(memory_id, tenant_id))
