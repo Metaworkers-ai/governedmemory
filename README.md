@@ -2,8 +2,11 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![CI](https://github.com/Metaworkers-ai/governedmemory/actions/workflows/ci.yml/badge.svg)](https://github.com/Metaworkers-ai/governedmemory/actions/workflows/ci.yml)
+[![Website](https://img.shields.io/badge/website-governed--memory-2E6F5E)](https://d1t8rv0ba48g0k.cloudfront.net)
 
 A governed memory layer for enterprise AI agents. Every memory record carries provenance, trust labels, purpose bindings, and a tamper-evident audit trail. Agents read only what they're allowed to read.
+
+**[→ Project site](https://d1t8rv0ba48g0k.cloudfront.net)** — the problem this solves, how the governance pipeline works, and what's live today (source: [`site/`](site/)).
 
 **Current status:** E1 + E2 + E3 + E4 complete — core data models, Postgres+pgvector store, a Write Governor pipeline (injection scanning + dedup), a governed Retrieval Engine (hybrid search + a real privilege gate), and a Policy Engine (purpose-binding + privileged-action evaluation) sit in front of every write and every read. E7 adds a self-hosted REST API covering memory/retrieve/quarantine/delete/audit/customers/memories, plus a thin `metaworkers` Python client on top; provenance and cascade-delete wait on E6's provenance graph. A Next.js frontend on top of the REST API is in progress, replacing the Streamlit demo.
 

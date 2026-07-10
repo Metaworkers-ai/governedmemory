@@ -144,6 +144,10 @@ governedmemory/
 │   ├── components/              ← Nav, ContextBar, shared UI primitives
 │   └── lib/                     ← backend.ts (server-only REST client) + types.ts
 │
+├── site/                        ← Public landing page (static, no build step) -- deployed to S3 + CloudFront
+│   ├── index.html
+│   └── README.md                ← Deploy commands
+│
 ├── scripts/
 │   ├── demo_data.py             ← Shared demo dataset (one tenant, five customers, 50 memories, one policy)
 │   ├── seed_demo.py             ← Populate the demo tenant
