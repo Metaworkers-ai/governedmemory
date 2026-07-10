@@ -766,6 +766,8 @@ governedmemory/
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for how to pick up an epic.
 
+For the near-term go-to-market plan — benchmark validation, a LangChain integration, and a frictionless demo — see [docs/traction-roadmap.md](docs/traction-roadmap.md). That roadmap is deliberately about proving and distributing what's already built, not new engine capability.
+
 ---
 
 ## License
