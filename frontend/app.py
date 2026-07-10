@@ -19,8 +19,8 @@ from dotenv import load_dotenv
 
 from core.memory_store import MemoryStore, NullEmbeddingProvider, init_db
 from core.models import Provenance, Purpose, PurposeBinding, SourceType, Taint, WriteRequest
-from core.retrieval_engine import reciprocal_rank_fusion, apply_privilege_gate
 from core.policy_engine import evaluate_purpose_binding, filter_by_purpose_binding
+from core.retrieval_engine import apply_privilege_gate, reciprocal_rank_fusion
 
 load_dotenv()
 

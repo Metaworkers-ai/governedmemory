@@ -59,7 +59,7 @@ def main() -> None:
 
     result = store.verify_audit_chain(TENANT_ID, limit=1000)
     status = "OK — chain intact" if result.valid else f"BROKEN — {result.reason}"
-    print(f"\n=== Audit trail ===")
+    print("\n=== Audit trail ===")
     print(f"  {result.total_events} events recorded, hash chain: {status}")
 
     if total_taint.get("untrusted", 0) > 0:
