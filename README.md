@@ -9,6 +9,45 @@ A governed memory layer for enterprise AI agents. Every memory record carries pr
 
 Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for setup and how to pick up an epic, [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community guidelines, and [SECURITY.md](SECURITY.md) to report a vulnerability.
 
+**New here?** Read [Stop Agents From Acting on Poisoned Memory](docs/use-cases/01-privileged-action-fraud-prevention.md) first — it's the concrete scenario (a phishing email trying to trigger a $4,200 refund) that this project exists to prevent, walked through end to end. See [all use cases](docs/use-cases/README.md) for the full list (prompt injection defense, multi-tenant isolation, purpose-limited retrieval, tamper-evident audit trail, memory hygiene).
+
+---
+
+## Quickstart (populate the DB + run the demo frontend)
+
+The fastest path from a clean clone to a working browser demo. Every command is identical on Windows PowerShell, macOS, and Linux unless noted.
+
+```bash
+# 1. Clone + environment
+git clone https://github.com/Metaworkers-ai/governedmemory.git
+cd governedmemory
+conda create -n mw python=3.11 -y
+conda activate mw
+pip install -r requirements-dev.txt -r requirements-frontend.txt -r requirements-embed-local.txt
+pip install -e .
+
+# 2. Configure (defaults already match the local Docker setup below — no edits needed)
+cp deploy/.env.example .env                 # Windows: Copy-Item deploy\.env.example .env
+
+# 3. Start Postgres+pgvector and create the schema
+docker pull pgvector/pgvector:pg16          # first time only, ~200 MB
+docker compose -f deploy/docker-compose.yml up -d
+python -c "import os; from dotenv import load_dotenv; load_dotenv(); from core.memory_store import init_db; init_db(os.environ['DATABASE_URL'])"
+
+# 4. Populate the demo tenant — 1 tenant, 5 customers, 50 memories, 1 policy
+python scripts/seed_demo.py --reset
+python scripts/categorize_demo.py           # optional readiness check (counts, taint mix, audit chain)
+
+# 5. Launch the frontend
+streamlit run frontend/app.py
+```
+
+Open `http://localhost:8501` — the sidebar already defaults to the demo tenant `solstice-cloud`. See [Try it in a browser](#try-it-in-a-browser) below for what each tab does and a live demo script.
+
+To stop: `Ctrl+C` the Streamlit process, then `docker compose -f deploy/docker-compose.yml down` (add `-v` to also wipe the data). If you pull new code or switch branches while Streamlit is already running, fully stop and restart it (see [Troubleshooting](#troubleshooting)) — autoreload doesn't always pick up changes made to `core/`.
+
+For the REST API + Python SDK instead of the direct-import store, see [REST API (E7)](#rest-api-e7--self-hosted) below.
+
 ---
 
 ## Enterprise
@@ -191,6 +230,13 @@ pip install -e .
 > pip install torch --index-url https://download.pytorch.org/whl/cpu
 > ```
 
+| Requirements file | Contents | When you need it |
+|---|---|---|
+| `requirements-core.txt` | psycopg2, pydantic, python-dotenv | Always — pulled in by every other file |
+| `requirements-dev.txt` | core + pytest, pytest-cov, testcontainers, ruff | Running the test suite or contributing |
+| `requirements-embed-local.txt` | core + sentence-transformers, torch | Real semantic vector search (optional — `NullEmbeddingProvider` works without it) |
+| `requirements-frontend.txt` | core + streamlit | Running the Streamlit demo UI |
+
 ### 4. Configure environment
 
 **Windows (PowerShell):**
@@ -204,6 +250,15 @@ cp deploy/.env.example .env
 ```
 
 Default values in `.env` already match the local Docker setup — no edits needed.
+
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `DATABASE_URL` | Yes | matches local Docker | Postgres connection string |
+| `EMBEDDING_MODEL` | No | `all-mpnet-base-v2` | SentenceTransformer model (local embedding provider only) |
+| `INJECTION_THRESHOLD` | No | `0.7` | Injection-scanner score above which a write is auto-tainted `untrusted` (E2) |
+| `OPENAI_API_KEY` | Only if using `OpenAIEmbeddingProvider` | — | |
+| `COHERE_API_KEY` | Only if using `CohereEmbeddingProvider` | — | |
+| `GOVERNEDMEMORY_API_KEYS` | Only for the REST API (E7) | — | `tenant_id:key,...` — per-tenant API keys |
 
 ---
 
@@ -560,6 +615,19 @@ pytest tests/integration/ -v
 pytest -v --cov=core --cov-report=term-missing
 ```
 
+### Test coverage by epic (E1–E4)
+
+117 tests covering the core engine (E1–E4): 75 unit (no Docker needed), 42 integration (real Postgres+pgvector via testcontainers). E7's REST API and SDK have their own test files (`tests/integration/test_api.py`, `tests/unit/test_sdk_client.py`, `tests/integration/test_sdk_client_e2e.py`) not included in the counts below.
+
+| Epic | Unit tests | Integration tests | What's covered |
+|---|---|---|---|
+| E1 — core models + store | `test_models.py` (28) | `TestMigrations`, `TestWriteAndRead`, `TestTenantIsolation`, `TestGovernanceMutations`, `TestAuditLog`, `TestVectorSearch` (22) | Model validation, write/read round-trip, cross-tenant isolation, quarantine/delete, hash-chained audit log, schema migrations |
+| E2 — Write Governor | `test_dedup.py` (9), `test_injection_scanner.py` (9) | `TestWriteGovernor` (6) | Text normalization + duplicate detection/supersede, injection-pattern scoring, end-to-end taint-on-write behavior |
+| E3 — Retrieval Engine | `test_fusion.py` (5), `test_privilege_gate.py` (10) | `TestRetrievalEngine` (6) | Reciprocal rank fusion, taint/purpose gating, `retrieve()` fuses + gates + audits correctly |
+| E4 — Policy Engine | `test_policy_engine.py` (14) | `TestPolicyEngine` (8) | Purpose-binding + privileged-action evaluation, `get_policy`/`upsert_policy` roundtrip, `check_privilege` allow/deny + audit emission |
+
+Run `pytest tests/unit/test_models.py tests/unit/test_dedup.py tests/unit/test_injection_scanner.py tests/unit/test_fusion.py tests/unit/test_privilege_gate.py tests/unit/test_policy_engine.py tests/integration/test_memory_store.py -q --collect-only` to see this breakdown live.
+
 ---
 
 ## Stop / Reset the database
@@ -683,6 +751,8 @@ governedmemory/
 | `DATABASE_URL not set` | Run `copy deploy\.env.example .env` (Windows) or `cp deploy/.env.example .env` (macOS/Linux) |
 | Integration tests not running (skipped) | Docker is not running or pgvector image not pulled |
 | `.venv\Scripts\Activate.ps1 cannot be loaded` | Run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` in PowerShell, then try again |
+| `AttributeError: 'MemoryStore' object has no attribute '...'` after pulling new code / switching branches while Streamlit is already running | Streamlit's autoreload re-runs `app.py` on save but doesn't reliably re-`import` already-loaded packages like `core/` — the old class stays cached in the process. Fully stop the Streamlit process (`Ctrl+C`, or kill the `python`/`streamlit` process holding port 8501) and run `streamlit run frontend/app.py` again. A browser refresh alone will not fix this. |
+| Frontend can't reach the DB / `get_stats` shows 0 memories | Make sure you ran `python scripts/seed_demo.py --reset` (step 4 of [Quickstart](#quickstart-populate-the-db--run-the-demo-frontend)) and that the sidebar tenant matches `solstice-cloud` |
 
 ---
 
