@@ -144,7 +144,7 @@ curl -X POST http://localhost:8000/v1/memory \
        "provenance":{"source_type":"user","source_ref":"msg-1","confidence":0.9}}'
 ```
 
-Or bring up server + database together: `docker compose -f deploy/docker-compose.yml up -d`.
+Or bring up the database, API, and web console together: `docker compose -f deploy/docker-compose.yml up -d` — see [Web UI (Next.js)](#web-ui-nextjs) below.
 
 ### Python SDK (`metaworkers`)
 
@@ -364,18 +364,32 @@ the Streamlit demo above as the primary browser UI. Unlike Streamlit, it talks t
 single-tenant-per-deployment: it resolves its tenant entirely from the one API key
 you configure, matching the REST API's own security model.
 
+**Included in the one-command self-host stack** — `docker compose -f deploy/docker-compose.yml up -d`
+now brings up Postgres, the REST API, *and* the console together:
+
 ```bash
-make api   # or: docker compose -f deploy/docker-compose.yml up -d
+docker compose -f deploy/docker-compose.yml up -d
+```
+
+Console at `http://localhost:3000`, API at `http://localhost:8000`. The console
+authenticates as whichever tenant `GOVERNEDMEMORY_API_KEY` resolves to (default
+`demo-key`, matching the API's default `GOVERNEDMEMORY_API_KEYS` — override both
+together if you change either).
+
+If you're developing on the console itself, run it outside Docker instead for hot
+reload:
+
+```bash
+make api   # or: docker compose -f deploy/docker-compose.yml up -d postgres api
 cd web
 cp .env.example .env.local   # set GOVERNEDMEMORY_API_URL / GOVERNEDMEMORY_API_KEY
 npm install
 npm run dev
 ```
 
-Opens at `http://localhost:3000`. Pages: Write, Browse, Search, Governance, Audit Log.
-The Streamlit demo's Policy tab and raw-vs-gated search comparison have no REST
-equivalent yet and aren't reproduced here — see [`web/README.md`](web/README.md#known-gaps-vs-the-streamlit-demo)
-for why.
+Pages: Write, Browse, Search, Governance, Audit Log. The Streamlit demo's Policy tab
+and raw-vs-gated search comparison have no REST equivalent yet and aren't reproduced
+here — see [`web/README.md`](web/README.md#known-gaps-vs-the-streamlit-demo) for why.
 
 ---
 
