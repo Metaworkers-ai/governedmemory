@@ -142,7 +142,8 @@ governedmemory/
 ├── web/                         ← Next.js console on the REST API (E7) -- replacing frontend/ above
 │   ├── app/                     ← Pages (Write, Browse, Search, Governance, Audit Log) + actions.ts (Server Actions)
 │   ├── components/              ← Nav, ContextBar, shared UI primitives
-│   └── lib/                     ← backend.ts (server-only REST client) + types.ts
+│   ├── lib/                     ← backend.ts (server-only REST client) + types.ts
+│   └── Dockerfile               ← Standalone build; wired into deploy/docker-compose.yml's `web` service
 │
 ├── site/                        ← Public landing page (static, no build step) -- deployed to S3 + CloudFront
 │   ├── index.html

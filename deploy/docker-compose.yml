@@ -1,6 +1,5 @@
-version: "3.9"
-
-# Local development stack — Postgres with pgvector extension pre-installed.
+# Full self-hosted stack: Postgres+pgvector, the REST API, and the web console --
+# one command brings up everything a self-hoster needs.
 #
 # This is cloud-agnostic: the same DATABASE_URL format works on AWS RDS,
 # GCP Cloud SQL, Azure Postgres, Supabase, Neon, etc.
@@ -9,6 +8,13 @@ version: "3.9"
 # Start:   docker compose -f deploy/docker-compose.yml up -d
 # Stop:    docker compose -f deploy/docker-compose.yml down
 # Reset:   docker compose -f deploy/docker-compose.yml down -v   (deletes data)
+#
+# Console:  http://localhost:3000
+# API:      http://localhost:8000
+#
+# GOVERNEDMEMORY_API_KEY (default "demo-key") is the one key the web console
+# authenticates with -- it must be one of the tenant:key pairs in
+# GOVERNEDMEMORY_API_KEYS below. Override both together if you change either.
 
 services:
   postgres:
@@ -41,6 +47,19 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ../web
+    environment:
+      # "api" resolves via Docker's internal network -- not localhost.
+      GOVERNEDMEMORY_API_URL: http://api:8000
+      GOVERNEDMEMORY_API_KEY: ${GOVERNEDMEMORY_API_KEY:-demo-key}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
     restart: unless-stopped
 
 volumes:
