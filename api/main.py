@@ -2,8 +2,10 @@
 FastAPI REST server (E7) -- the self-hosted surface for GovernedMemory.
 
 Wraps the existing MemoryStore pipeline (E1-E4) behind the six routes from
-the engineering plan's REST API section (Sec 5.8). Two are intentionally
-thin stubs for now:
+the engineering plan's REST API section (Sec 5.8), plus /v1/customers and
+/v1/memories (listing -- added for the Next.js frontend's Browse page,
+since the original plan had no way to list what's stored without knowing
+a search query). Two are intentionally thin stubs for now:
 
   - DELETE /v1/memory/{id}?cascade=true
   - GET    /v1/provenance/{id}
@@ -134,6 +136,30 @@ def list_audit(
     store: MemoryStore = Depends(get_store),
 ) -> list[dict]:
     return store.list_audit(tenant_id, limit=limit)
+
+
+@app.get("/v1/customers", response_model=list[dict])
+def list_customers(
+    tenant_id: str = Depends(require_tenant),
+    store: MemoryStore = Depends(get_store),
+) -> list[dict]:
+    """Distinct customers for the authenticated tenant, with memory counts --
+    listing/navigation wasn't part of the original six-route plan, but a
+    frontend can't browse without it."""
+    return store.list_customers(tenant_id)
+
+
+@app.get("/v1/memories", response_model=list[MemoryRecord])
+def list_memories(
+    customer_id: str,
+    tenant_id: str = Depends(require_tenant),
+    store: MemoryStore = Depends(get_store),
+) -> list[MemoryRecord]:
+    """All memories for one customer, newest first -- the plain listing
+    frontend/app.py gets from MemoryStore.list_for_customer() directly.
+    Unlike /v1/retrieve, this applies no query, ranking, or privilege gate:
+    it is scoped by tenant_id (from the API key) and customer_id only."""
+    return store.list_for_customer(tenant_id, customer_id)
 
 
 @app.get("/v1/provenance/{memory_id}")

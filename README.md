@@ -2,10 +2,13 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![CI](https://github.com/Metaworkers-ai/governedmemory/actions/workflows/ci.yml/badge.svg)](https://github.com/Metaworkers-ai/governedmemory/actions/workflows/ci.yml)
+[![Website](https://img.shields.io/badge/website-governed--memory-2E6F5E)](https://d1t8rv0ba48g0k.cloudfront.net)
 
 A governed memory layer for enterprise AI agents. Every memory record carries provenance, trust labels, purpose bindings, and a tamper-evident audit trail. Agents read only what they're allowed to read.
 
-**Current status:** E1 + E2 + E3 + E4 complete — core data models, Postgres+pgvector store, a Write Governor pipeline (injection scanning + dedup), a governed Retrieval Engine (hybrid search + a real privilege gate), and a Policy Engine (purpose-binding + privileged-action evaluation) sit in front of every write and every read. E7 (in progress) adds a self-hosted REST API covering memory/retrieve/quarantine/delete/audit, plus a thin `metaworkers` Python client on top; provenance and cascade-delete wait on E6's provenance graph.
+**[→ Project site](https://d1t8rv0ba48g0k.cloudfront.net)** — the problem this solves, how the governance pipeline works, and what's live today (source: [`site/`](site/)).
+
+**Current status:** E1 + E2 + E3 + E4 complete — core data models, Postgres+pgvector store, a Write Governor pipeline (injection scanning + dedup), a governed Retrieval Engine (hybrid search + a real privilege gate), and a Policy Engine (purpose-binding + privileged-action evaluation) sit in front of every write and every read. E7 adds a self-hosted REST API covering memory/retrieve/quarantine/delete/audit/customers/memories, plus a thin `metaworkers` Python client on top; provenance and cascade-delete wait on E6's provenance graph. A Next.js frontend on top of the REST API is in progress, replacing the Streamlit demo.
 
 Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for setup and how to pick up an epic, [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community guidelines, and [SECURITY.md](SECURITY.md) to report a vulnerability.
 
@@ -120,6 +123,8 @@ Zero configuration still gets you something: the default `PrivilegeRules` requir
 | `POST /v1/quarantine` | `MemoryStore.quarantine()` |
 | `DELETE /v1/memory/{id}` | `MemoryStore.delete()` (non-cascade only — `?cascade=true` returns 501 until E6) |
 | `GET /v1/audit` | `MemoryStore.list_audit()` |
+| `GET /v1/customers` | `MemoryStore.list_customers()` — added for the Next.js frontend's Browse page |
+| `GET /v1/memories?customer_id=` | `MemoryStore.list_for_customer()` — plain listing, no query/ranking/gate (unlike `/v1/retrieve`) |
 | `GET /v1/provenance/{id}` | not built yet — returns 501 (needs E6's provenance graph traversal) |
 
 Auth is per-tenant API keys via `GOVERNEDMEMORY_API_KEYS="tenant_id:key,..."` — every route resolves `tenant_id` from the caller's key, never from the request body, so one tenant's key can't act on another tenant's memories.
@@ -306,7 +311,9 @@ The schema is now live. You're ready to use the store.
 ## Try it in a browser
 
 A Streamlit UI is included so you can try E1 end-to-end without writing any Python.
-It talks directly to `MemoryStore` — there's no REST API yet (that's E7).
+It talks directly to `MemoryStore`, not the REST API (it predates E7). A Next.js
+frontend built on the REST API is in progress — see [Web UI (Next.js)](#web-ui-nextjs) below,
+which will eventually replace this one.
 
 ```bash
 # Windows PowerShell, macOS, Linux — same command
@@ -346,6 +353,29 @@ python scripts/seed_demo.py --reset   # wipe + populate the demo tenant
 python scripts/categorize_demo.py     # readiness check: counts, taint/purpose breakdown, audit chain
 streamlit run frontend/app.py         # sidebar already defaults to the demo tenant
 ```
+
+---
+
+## Web UI (Next.js)
+
+A Next.js console on top of the REST API — see [`web/`](web/) — intended to replace
+the Streamlit demo above as the primary browser UI. Unlike Streamlit, it talks to
+`/v1/*` over plain HTTP (no Python/DB access from the frontend at all), and is
+single-tenant-per-deployment: it resolves its tenant entirely from the one API key
+you configure, matching the REST API's own security model.
+
+```bash
+make api   # or: docker compose -f deploy/docker-compose.yml up -d
+cd web
+cp .env.example .env.local   # set GOVERNEDMEMORY_API_URL / GOVERNEDMEMORY_API_KEY
+npm install
+npm run dev
+```
+
+Opens at `http://localhost:3000`. Pages: Write, Browse, Search, Governance, Audit Log.
+The Streamlit demo's Policy tab and raw-vs-gated search comparison have no REST
+equivalent yet and aren't reproduced here — see [`web/README.md`](web/README.md#known-gaps-vs-the-streamlit-demo)
+for why.
 
 ---
 
@@ -762,7 +792,7 @@ governedmemory/
 |---|---|
 | E5 | Detection — injection classifier (precision/recall tracked) |
 | E6 | Audit Graph — cascade purge, provenance tree, hash-chain verifier |
-| E7 | Python SDK + FastAPI `/v1/` REST API — both now available (server: 4/6 routes, self-hosted via Docker; `metaworkers` thin client on top); provenance/cascade-delete pending E6 |
+| E7 | Python SDK + FastAPI `/v1/` REST API — both merged (server: 6/8 routes, self-hosted via Docker; `metaworkers` thin client on top); provenance/cascade-delete pending E6. Next.js frontend on top of the REST API in progress. |
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for how to pick up an epic.
 

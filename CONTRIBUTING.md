@@ -127,7 +127,7 @@ governedmemory/
 │       └── evaluator.py         ← Tenant-level purpose-binding + privileged-action evaluation
 │
 ├── api/                        ← FastAPI REST server (E7) — wraps core/ behind /v1/*
-│   ├── main.py                  ← App + routes: memory, retrieve, quarantine, delete, audit, provenance
+│   ├── main.py                  ← App + routes: memory, retrieve, quarantine, delete, audit, customers, memories, provenance
 │   ├── auth.py                  ← Per-tenant API key resolution (GOVERNEDMEMORY_API_KEYS)
 │   ├── schemas.py                ← Request bodies (no tenant_id field -- resolved from the API key)
 │   └── deps.py                  ← MemoryStore singleton, built at startup
@@ -137,7 +137,16 @@ governedmemory/
 │       └── client.py            ← GovernedMemory class -- stdlib-only, no core/ dependency, own pyproject.toml
 │
 ├── frontend/
-│   └── app.py                  ← Streamlit UI — try the store end-to-end in a browser
+│   └── app.py                  ← Streamlit UI — try the store end-to-end in a browser (predates E7, talks to MemoryStore directly)
+│
+├── web/                         ← Next.js console on the REST API (E7) -- replacing frontend/ above
+│   ├── app/                     ← Pages (Write, Browse, Search, Governance, Audit Log) + actions.ts (Server Actions)
+│   ├── components/              ← Nav, ContextBar, shared UI primitives
+│   └── lib/                     ← backend.ts (server-only REST client) + types.ts
+│
+├── site/                        ← Public landing page (static, no build step) -- deployed to S3 + CloudFront
+│   ├── index.html
+│   └── README.md                ← Deploy commands
 │
 ├── scripts/
 │   ├── demo_data.py             ← Shared demo dataset (one tenant, five customers, 50 memories, one policy)

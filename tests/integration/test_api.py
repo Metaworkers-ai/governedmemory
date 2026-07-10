@@ -158,6 +158,69 @@ class TestAudit:
         assert all(memory_id not in e["memory_ids"] for e in other_resp.json())
 
 
+class TestCustomersAndMemories:
+    def test_list_customers_returns_only_the_authenticated_tenants_customers(self, client):
+        marker = str(uuid.uuid4())
+        client.post(
+            "/v1/memory",
+            json=_write_body(customer_id=f"cust-a-{marker}"),
+            headers=_auth(KEY_A),
+        )
+        client.post(
+            "/v1/memory",
+            json=_write_body(customer_id=f"cust-b-{marker}"),
+            headers=_auth(KEY_B),
+        )
+
+        resp = client.get("/v1/customers", headers=_auth(KEY_A))
+        assert resp.status_code == 200
+        customer_ids = [c["customer_id"] for c in resp.json()]
+        assert f"cust-a-{marker}" in customer_ids
+        assert f"cust-b-{marker}" not in customer_ids
+
+    def test_list_customers_includes_memory_count(self, client):
+        marker = str(uuid.uuid4())
+        customer_id = f"cust-count-{marker}"
+        client.post("/v1/memory", json=_write_body(customer_id=customer_id), headers=_auth(KEY_A))
+        client.post("/v1/memory", json=_write_body(customer_id=customer_id), headers=_auth(KEY_A))
+
+        resp = client.get("/v1/customers", headers=_auth(KEY_A))
+        row = next(c for c in resp.json() if c["customer_id"] == customer_id)
+        assert row["memory_count"] == 2
+
+    def test_list_memories_returns_only_that_customers_memories(self, client):
+        marker = str(uuid.uuid4())
+        client.post(
+            "/v1/memory",
+            json=_write_body(customer_id=f"cust-x-{marker}", content=f"about x {marker}"),
+            headers=_auth(KEY_A),
+        )
+        client.post(
+            "/v1/memory",
+            json=_write_body(customer_id=f"cust-y-{marker}", content=f"about y {marker}"),
+            headers=_auth(KEY_A),
+        )
+
+        resp = client.get(f"/v1/memories?customer_id=cust-x-{marker}", headers=_auth(KEY_A))
+        assert resp.status_code == 200
+        contents = [m["content"] for m in resp.json()]
+        assert any(f"about x {marker}" in c for c in contents)
+        assert all(f"about y {marker}" not in c for c in contents)
+
+    def test_list_memories_is_tenant_scoped(self, client):
+        marker = str(uuid.uuid4())
+        customer_id = f"cust-shared-{marker}"
+        client.post(
+            "/v1/memory",
+            json=_write_body(customer_id=customer_id, content=f"tenant A only {marker}"),
+            headers=_auth(KEY_A),
+        )
+
+        resp = client.get(f"/v1/memories?customer_id={customer_id}", headers=_auth(KEY_B))
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+
 class TestNotYetImplemented:
     def test_provenance_returns_501(self, client):
         resp = client.get(
