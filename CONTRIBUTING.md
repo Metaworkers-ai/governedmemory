@@ -459,7 +459,7 @@ Before opening a PR, verify all of the following:
 
 ## License
 
-This project is licensed under [Apache 2.0](LICENSE). By submitting a contribution, you agree it's licensed under the same terms.
+This project is licensed under [MIT](LICENSE). By submitting a contribution, you agree it's licensed under the same terms.
 
 We use the [Developer Certificate of Origin (DCO)](https://developercertificate.org/) instead of a separate CLA — it's lighter-weight and just confirms you have the right to submit the code. Sign off every commit with `-s`:
 
