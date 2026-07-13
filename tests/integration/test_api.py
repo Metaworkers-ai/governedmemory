@@ -148,9 +148,7 @@ class TestQuarantineAndDelete:
         )
         child_id = child_resp.json()["id"]
 
-        preview_resp = client.get(
-            f"/v1/memory/{root_id}/cascade-preview", headers=_auth(KEY_A)
-        )
+        preview_resp = client.get(f"/v1/memory/{root_id}/cascade-preview", headers=_auth(KEY_A))
         assert preview_resp.status_code == 200
         assert set(preview_resp.json()["descendant_ids"]) == {child_id}
 
