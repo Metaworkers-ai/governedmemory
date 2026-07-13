@@ -50,4 +50,4 @@ streamlit run frontend/app.py
 
 See [Quickstart](../../README.md#quickstart-populate-the-db--run-the-demo-frontend) in the main README for the full copy-paste setup.
 
-The core engine (write governor, retrieval engine, policy engine, audit log) is Apache 2.0 and self-hostable. If you need SSO/RBAC, a managed policy console, or help integrating this into an existing agent stack, see [Enterprise](../../README.md#enterprise).
+The core engine (write governor, retrieval engine, policy engine, audit log) is MIT-licensed and self-hostable. If you need SSO/RBAC, a managed policy console, or help integrating this into an existing agent stack, see [Enterprise](../../README.md#enterprise).
