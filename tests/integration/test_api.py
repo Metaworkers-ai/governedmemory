@@ -122,12 +122,54 @@ class TestQuarantineAndDelete:
         )
         assert resp.status_code == 404
 
-    def test_cascade_delete_returns_501(self, client):
-        write_resp = client.post("/v1/memory", json=_write_body(), headers=_auth(KEY_A))
-        memory_id = write_resp.json()["id"]
+    def test_cascade_delete_purges_descendants(self, client):
+        marker = str(uuid.uuid4())
+        customer_id = f"cust-cascade-{marker}"
+        root_resp = client.post(
+            "/v1/memory",
+            json=_write_body(customer_id=customer_id, content=f"root {marker}"),
+            headers=_auth(KEY_A),
+        )
+        root_id = root_resp.json()["id"]
 
-        resp = client.delete(f"/v1/memory/{memory_id}?cascade=true", headers=_auth(KEY_A))
-        assert resp.status_code == 501
+        child_resp = client.post(
+            "/v1/memory",
+            json=_write_body(
+                customer_id=customer_id,
+                content=f"derived from root {marker}",
+                provenance={
+                    "source_type": "agent_derived",
+                    "source_ref": "summarizer",
+                    "confidence": 0.9,
+                    "parent_ids": [root_id],
+                },
+            ),
+            headers=_auth(KEY_A),
+        )
+        child_id = child_resp.json()["id"]
+
+        preview_resp = client.get(
+            f"/v1/memory/{root_id}/cascade-preview", headers=_auth(KEY_A)
+        )
+        assert preview_resp.status_code == 200
+        assert set(preview_resp.json()["descendant_ids"]) == {child_id}
+
+        resp = client.delete(f"/v1/memory/{root_id}?cascade=true", headers=_auth(KEY_A))
+        assert resp.status_code == 200
+        assert resp.json() == {"success": True}
+
+        # No GET /v1/memory/{id} route exists in this API -- verify both the
+        # root and its descendant are actually gone via the listing endpoint.
+        list_resp = client.get(f"/v1/memories?customer_id={customer_id}", headers=_auth(KEY_A))
+        remaining_ids = {m["id"] for m in list_resp.json()}
+        assert root_id not in remaining_ids
+        assert child_id not in remaining_ids
+
+    def test_cascade_delete_nonexistent_memory_is_404(self, client):
+        resp = client.delete(
+            "/v1/memory/00000000-0000-0000-0000-000000000000?cascade=true", headers=_auth(KEY_A)
+        )
+        assert resp.status_code == 404
 
     def test_cannot_quarantine_another_tenants_memory(self, client):
         write_resp = client.post("/v1/memory", json=_write_body(), headers=_auth(KEY_A))
@@ -221,15 +263,50 @@ class TestCustomersAndMemories:
         assert resp.json() == []
 
 
-class TestNotYetImplemented:
-    def test_provenance_returns_501(self, client):
-        resp = client.get(
-            "/v1/provenance/00000000-0000-0000-0000-000000000000", headers=_auth(KEY_A)
+class TestProvenance:
+    def test_provenance_of_a_root_memory_is_empty(self, client):
+        write_resp = client.post("/v1/memory", json=_write_body(), headers=_auth(KEY_A))
+        memory_id = write_resp.json()["id"]
+
+        resp = client.get(f"/v1/provenance/{memory_id}", headers=_auth(KEY_A))
+        assert resp.status_code == 200
+        assert resp.json() == {"memory_id": memory_id, "ancestors": [], "descendants": []}
+
+    def test_provenance_reflects_parent_ids(self, client):
+        marker = str(uuid.uuid4())
+        root_resp = client.post(
+            "/v1/memory",
+            json=_write_body(content=f"root {marker}"),
+            headers=_auth(KEY_A),
         )
-        assert resp.status_code == 501
+        root_id = root_resp.json()["id"]
+
+        child_resp = client.post(
+            "/v1/memory",
+            json=_write_body(
+                content=f"derived from root {marker}",
+                provenance={
+                    "source_type": "agent_derived",
+                    "source_ref": "summarizer",
+                    "confidence": 0.9,
+                    "parent_ids": [root_id],
+                },
+            ),
+            headers=_auth(KEY_A),
+        )
+        child_id = child_resp.json()["id"]
+
+        root_provenance = client.get(f"/v1/provenance/{root_id}", headers=_auth(KEY_A)).json()
+        assert root_provenance["ancestors"] == []
+        assert root_provenance["descendants"] == [child_id]
+
+        child_provenance = client.get(f"/v1/provenance/{child_id}", headers=_auth(KEY_A)).json()
+        assert child_provenance["ancestors"] == [root_id]
+        assert child_provenance["descendants"] == []
 
 
 def test_healthz_needs_no_auth(client):
     resp = client.get("/healthz")
     assert resp.status_code == 200
     assert resp.json() == {"status": "ok"}
+
