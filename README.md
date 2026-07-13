@@ -1,6 +1,6 @@
 # Governed Memory — Metaworkers.AI
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CI](https://github.com/Metaworkers-ai/governedmemory/actions/workflows/ci.yml/badge.svg)](https://github.com/Metaworkers-ai/governedmemory/actions/workflows/ci.yml)
 [![Website](https://img.shields.io/badge/website-governed--memory-2E6F5E)](https://d1t8rv0ba48g0k.cloudfront.net)
 
@@ -55,7 +55,7 @@ For the REST API + Python SDK instead of the direct-import store, see [REST API 
 
 ## Enterprise
 
-The core governed-memory engine here is open source (Apache 2.0) — self-host it, audit it, extend it. For teams that need SSO/RBAC, managed hosting, SLA-backed support, or help integrating it into an existing agent stack, reach out at **jagadish@metaworkers.ai**.
+The core governed-memory engine here is open source (MIT) — self-host it, audit it, extend it. For teams that need SSO/RBAC, managed hosting, SLA-backed support, or help integrating it into an existing agent stack, reach out at **jagadish@metaworkers.ai**.
 
 ---
 
@@ -816,4 +816,4 @@ For the near-term go-to-market plan — benchmark validation, a LangChain integr
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE). Contributions are accepted under the same license (see [CONTRIBUTING.md](CONTRIBUTING.md#license)).
+MIT — see [LICENSE](LICENSE). Contributions are accepted under the same license (see [CONTRIBUTING.md](CONTRIBUTING.md#license)).
