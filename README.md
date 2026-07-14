@@ -187,6 +187,8 @@ Or bring up the database, API, and web console together: `docker compose -f depl
 ### Python SDK (`metaworkers`)
 
 A thin client for the REST API above — no third-party dependencies (stdlib `urllib.request` only), and no dependency on this repo's `core`/`api` packages, so installing it doesn't pull in Postgres/FastAPI/etc.
+```bash
+pip install -e sdk/python   # not yet published to PyPI
 ```
 
 ```python
