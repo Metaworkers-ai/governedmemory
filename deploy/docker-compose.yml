@@ -6,6 +6,8 @@
 # Only this docker-compose file is environment-specific.
 #
 # Start:   docker compose -f deploy/docker-compose.yml up -d
+# Start + seed demo data (one tenant, five customers, 50 memories):
+#          docker compose -f deploy/docker-compose.yml --profile seed up -d
 # Stop:    docker compose -f deploy/docker-compose.yml down
 # Reset:   docker compose -f deploy/docker-compose.yml down -v   (deletes data)
 #
@@ -15,6 +17,9 @@
 # GOVERNEDMEMORY_API_KEY (default "demo-key") is the one key the web console
 # authenticates with -- it must be one of the tenant:key pairs in
 # GOVERNEDMEMORY_API_KEYS below. Override both together if you change either.
+# The default tenant ("solstice-cloud") matches scripts/demo_data.py's
+# TENANT_ID, so the --profile seed job's data shows up in the console with
+# zero extra config -- keep these in sync if either one changes.
 
 services:
   postgres:
@@ -41,7 +46,7 @@ services:
     environment:
       DATABASE_URL: postgresql://mw:mw_dev_password@postgres:5432/governedmemory
       # Override with your own tenant:key pairs — this default is dev-only.
-      GOVERNEDMEMORY_API_KEYS: ${GOVERNEDMEMORY_API_KEYS:-demo:demo-key}
+      GOVERNEDMEMORY_API_KEYS: ${GOVERNEDMEMORY_API_KEYS:-solstice-cloud:demo-key}
     ports:
       - "8000:8000"
     depends_on:
@@ -61,6 +66,25 @@ services:
     depends_on:
       - api
     restart: unless-stopped
+
+  # Optional one-shot job: populates the demo tenant (scripts/demo_data.py --
+  # one company, five customers, 50 memories, mixed trusted/untrusted/
+  # quarantined, one purpose-binding policy) so `--profile seed up` gives a
+  # cold clone something to look at in the console immediately. Talks
+  # directly to Postgres, not through the API, so it only waits on that
+  # healthcheck. Reuses the `api` image (already has core/ + scripts/ + deps)
+  # rather than building a separate one.
+  seed:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://mw:mw_dev_password@postgres:5432/governedmemory
+    command: ["python", "scripts/seed_demo.py", "--reset"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles: ["seed"]
 
 volumes:
   pgdata:
