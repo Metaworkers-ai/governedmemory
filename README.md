@@ -8,7 +8,7 @@ A governed memory layer for enterprise AI agents. Every memory record carries pr
 
 **[→ Project site](https://d1t8rv0ba48g0k.cloudfront.net)** — the problem this solves, how the governance pipeline works, and what's live today (source: [`site/`](site/)).
 
-**Current status:** E1 + E2 + E3 + E4 complete — core data models, Postgres+pgvector store, a Write Governor pipeline (injection scanning + dedup), a governed Retrieval Engine (hybrid search + a real privilege gate), and a Policy Engine (purpose-binding + privileged-action evaluation) sit in front of every write and every read. E7 adds a self-hosted REST API covering memory/retrieve/quarantine/delete/audit/customers/memories, plus a thin `metaworkers` Python client on top; provenance and cascade-delete wait on E6's provenance graph. A Next.js frontend on top of the REST API is in progress, replacing the Streamlit demo.
+**Current status:** E1 + E2 + E3 + E4 + E5 + E6 + E7 complete — core data models, Postgres+pgvector store, a Write Governor pipeline (injection scanning + dedup), a governed Retrieval Engine (hybrid search + a real privilege gate), a Policy Engine (purpose-binding + privileged-action evaluation), a Detection module (trained injection classifier with tracked precision/recall), an Audit Graph (provenance lineage, cascade purge, a formal hash-chain verifier), and a self-hosted REST API covering memory/retrieve/quarantine/delete/audit/customers/memories (plus a thin `metaworkers` Python client) sit in front of every write and every read. A Next.js frontend on top of the REST API replaces the earlier Streamlit demo.
 
 Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for setup and how to pick up an epic, [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community guidelines, and [SECURITY.md](SECURITY.md) to report a vulnerability.
 
@@ -112,6 +112,43 @@ Zero configuration still gets you something: the default `PrivilegeRules` requir
 
 ---
 
+## What's in E5
+
+E2's injection scanner (`core/write_governor/injection_scanner.py`) is a fixed set of hand-written regex patterns — fast and explainable, but its recall is bounded by whatever someone thought to write a pattern for, and there was no principled way to measure precision/recall against it. E5 adds a trained classifier and the tooling to measure it, without changing E2's default behavior.
+
+| Component | File | What it does |
+|---|---|---|
+| Classifier | `core/detection/classifier.py` | `InjectionClassifier` — a multinomial Naive Bayes bag-of-words classifier, pure Python (stdlib only, no numpy/sklearn/torch). `train()` fits on any list of labeled examples; `predict_proba()` returns P(injection) in [0, 1]; `save()`/`load()` round-trip through human-readable JSON. `get_default_classifier()` trains once in-process from the bundled dataset — zero setup required. |
+| Dataset | `core/detection/dataset.py` | A small labeled dataset (injection + benign) in the same CX/sales/billing domain as `scripts/demo_data.py`, plus a deterministic stratified `split_examples()` for train/held-out evaluation. |
+| Metrics | `core/detection/metrics.py` | `evaluate()` — precision/recall/F1 for any scorer against a labeled set at a given threshold. `evaluate_at_thresholds()` sweeps several thresholds at once. |
+| Pluggable scorer | `core/detection/scanner.py` | `score_injection()` — same `(score, labels)` shape as E2's `scan_for_injection()`, selectable via the `DETECTION_BACKEND` env var: `heuristic` (default — byte-identical to E2, so nothing changes unless you opt in), `classifier` (trained model only), or `ensemble` (both, combined via the same noisy-OR E2 uses internally). |
+| Write Governor integration | `MemoryStore.write()` | Now calls `score_injection()` instead of `scan_for_injection()` directly — the injection-scoring step of the pipeline is backend-pluggable, everything downstream (tainting, `INJECTION_THRESHOLD`, audit) is unchanged. |
+
+Try it: `python scripts/eval_detection.py` prints a precision/recall/F1 table for the heuristic scanner, the trained classifier, and the ensemble, all against the same held-out split — no `DATABASE_URL` or Docker needed. `python scripts/train_detection.py` saves a reusable model artifact if you want one (point `DETECTION_MODEL_PATH` at it instead of always retraining the bundled default).
+
+This is a small, illustrative OSS default, not a production-grade classifier — anyone deploying this for real should train `InjectionClassifier` on their own labeled traffic.
+
+---
+
+## What's in E6
+
+`Provenance.parent_ids` has existed on every `MemoryRecord` since E1, tagged "provenance graph edges (E6)" — but until now nothing built a graph out of it or walked it, and `delete()` only ever removed one record at a time. E6 adds the graph, a cascade-purge operation built on top of it, and a *formal* audit hash-chain verifier — plus a real bug fix that the verifier depends on.
+
+| Component | File | What it does |
+|---|---|---|
+| Provenance graph | `core/audit/provenance_graph.py` | Pure Python. `build_provenance_graph()` turns a flat list of `(memory_id, parent_ids)` pairs into a `ProvenanceGraph`; `.ancestors(id)`/`.descendants(id)` walk it transitively (breadth-first, cycle-safe — nothing at the DB layer stops a malformed `parent_ids` loop, since it's JSONB, not a foreign key). |
+| Cascade purge | `core/audit/cascade_purge.py` | `plan_cascade_purge(graph, root_id)` computes the full delete set for purging `root_id`: itself plus every transitive descendant. Pure function, no DB access — `MemoryStore.purge_cascade()` is the DB-aware caller. |
+| Hash-chain verifier | `core/audit/verifier.py` | `verify_chain()` recomputes every event's hash from its own stored fields and checks it against the recorded hash, *in addition to* checking `prev_hash` linkage — so an in-place tamper (an `UPDATE` on an existing audit row, which nothing at the DB level currently blocks) is caught, not just a deleted or reordered event. |
+| Store integration | `core/memory_store/store.py` | New: `get_provenance()`, `get_provenance_graph()`, `preview_cascade_purge()`, `purge_cascade()` (one `AuditOp.PURGE` event listing every id removed), `verify_audit_chain()`. `delete()` is unchanged — it still removes exactly one record; use `purge_cascade()` when derivatives should go with it. |
+| Bug fix | `MemoryStore._audit_in_tx()` | The hash payload was computed from a Python-side `ts` while the row itself stored a separate `clock_timestamp()` — so the hash could never be reconciled with what was actually persisted. It now reads `clock_timestamp()` back and reuses that exact value for both the hash and the stored row, which is what makes `verify_chain()` possible against real data. |
+| REST API integration | `api/main.py` | `DELETE /v1/memory/{id}?cascade=true`, `GET /v1/memory/{id}/cascade-preview`, and `GET /v1/provenance/{id}` (E7 routes) now call the store methods above instead of returning `501`. |
+
+Try it: `python scripts/verify_audit.py` checks the demo tenant's chain and exits non-zero if it's broken (point `--tenant` at another tenant, or add `--provenance <memory_id>` to also print a memory's lineage and what a cascade purge of it would take with it). `scripts/categorize_demo.py`'s readiness check now calls the same formal verifier instead of the linkage-only check it used to do by hand.
+
+Cascade purge deletes are irreversible, same as `delete()` — `preview_cascade_purge()` (or `GET /v1/memory/{id}/cascade-preview` over the REST API) returns the delete set without touching the database, for a confirmation step before calling `purge_cascade()` for real.
+
+---
+
 ## REST API (E7) — self-hosted
 
 `core/` (this repo's engine) now sits behind a FastAPI server instead of being importable directly. This is a deliberate architecture choice: `pip install` gets you a thin client that talks to a server you run yourself (like the `stripe` SDK), not an embedded copy of the governance logic (like `numpy`) — so a hosted, managed version can be offered later without changing how self-hosting works today.
@@ -121,11 +158,12 @@ Zero configuration still gets you something: the default `PrivilegeRules` requir
 | `POST /v1/memory` | `MemoryStore.write()` |
 | `POST /v1/retrieve` | `MemoryStore.retrieve()` |
 | `POST /v1/quarantine` | `MemoryStore.quarantine()` |
-| `DELETE /v1/memory/{id}` | `MemoryStore.delete()` (non-cascade only — `?cascade=true` returns 501 until E6) |
+| `DELETE /v1/memory/{id}` | `MemoryStore.delete()`; `?cascade=true` calls `MemoryStore.purge_cascade()` (E6) instead |
+| `GET /v1/memory/{id}/cascade-preview` | `MemoryStore.preview_cascade_purge()` (E6) — dry-run for the line above |
 | `GET /v1/audit` | `MemoryStore.list_audit()` |
 | `GET /v1/customers` | `MemoryStore.list_customers()` — added for the Next.js frontend's Browse page |
 | `GET /v1/memories?customer_id=` | `MemoryStore.list_for_customer()` — plain listing, no query/ranking/gate (unlike `/v1/retrieve`) |
-| `GET /v1/provenance/{id}` | not built yet — returns 501 (needs E6's provenance graph traversal) |
+| `GET /v1/provenance/{id}` | `MemoryStore.get_provenance()` (E6) — a memory's ancestors/descendants |
 
 Auth is per-tenant API keys via `GOVERNEDMEMORY_API_KEYS="tenant_id:key,..."` — every route resolves `tenant_id` from the caller's key, never from the request body, so one tenant's key can't act on another tenant's memories.
 
@@ -149,7 +187,6 @@ Or bring up the database, API, and web console together: `docker compose -f depl
 ### Python SDK (`metaworkers`)
 
 A thin client for the REST API above — no third-party dependencies (stdlib `urllib.request` only), and no dependency on this repo's `core`/`api` packages, so installing it doesn't pull in Postgres/FastAPI/etc.
-
 ```bash
 pip install -e sdk/python   # not yet published to PyPI
 ```
@@ -659,9 +696,9 @@ pytest tests/integration/ -v
 pytest -v --cov=core --cov-report=term-missing
 ```
 
-### Test coverage by epic (E1–E4)
+### Test coverage by epic (E1–E6)
 
-117 tests covering the core engine (E1–E4): 75 unit (no Docker needed), 42 integration (real Postgres+pgvector via testcontainers). E7's REST API and SDK have their own test files (`tests/integration/test_api.py`, `tests/unit/test_sdk_client.py`, `tests/integration/test_sdk_client_e2e.py`) not included in the counts below.
+124 tests covering the core engine (E1–E6): 124 unit (no Docker needed: 75 for E1–E4, 27 for E5's detection module, 22 for E6's audit graph), 54 integration (real Postgres+pgvector via testcontainers: 42 for E1–E4, 12 for E6's provenance/cascade-purge/verifier entry points). E7's REST API and SDK have their own test files (`tests/integration/test_api.py`, `tests/unit/test_sdk_client.py`, `tests/integration/test_sdk_client_e2e.py`) not included in the counts below.
 
 | Epic | Unit tests | Integration tests | What's covered |
 |---|---|---|---|
@@ -669,8 +706,10 @@ pytest -v --cov=core --cov-report=term-missing
 | E2 — Write Governor | `test_dedup.py` (9), `test_injection_scanner.py` (9) | `TestWriteGovernor` (6) | Text normalization + duplicate detection/supersede, injection-pattern scoring, end-to-end taint-on-write behavior |
 | E3 — Retrieval Engine | `test_fusion.py` (5), `test_privilege_gate.py` (10) | `TestRetrievalEngine` (6) | Reciprocal rank fusion, taint/purpose gating, `retrieve()` fuses + gates + audits correctly |
 | E4 — Policy Engine | `test_policy_engine.py` (14) | `TestPolicyEngine` (8) | Purpose-binding + privileged-action evaluation, `get_policy`/`upsert_policy` roundtrip, `check_privilege` allow/deny + audit emission |
+| E5 — Detection | `test_detection.py` (27) | — (no DB needed) | Classifier train/predict/save/load round-trip, dataset split determinism, precision/recall/F1 metrics, `score_injection()` backend selection |
+| E6 — Audit Graph | `test_audit.py` (22) | `TestProvenanceGraph` (4), `TestCascadePurge` (5), `TestAuditVerifier` (3) | Provenance graph build/ancestors/descendants (incl. cycles), cascade-purge planning, hash-chain verification (tamper + reorder detection) |
 
-Run `pytest tests/unit/test_models.py tests/unit/test_dedup.py tests/unit/test_injection_scanner.py tests/unit/test_fusion.py tests/unit/test_privilege_gate.py tests/unit/test_policy_engine.py tests/integration/test_memory_store.py -q --collect-only` to see this breakdown live.
+Run `pytest tests/unit/test_models.py tests/unit/test_dedup.py tests/unit/test_injection_scanner.py tests/unit/test_fusion.py tests/unit/test_privilege_gate.py tests/unit/test_policy_engine.py tests/unit/test_detection.py tests/unit/test_audit.py tests/integration/test_memory_store.py -q --collect-only` to see this breakdown live.
 
 ---
 
@@ -691,7 +730,7 @@ docker compose -f deploy/docker-compose.yml up -d
 
 ## Deploy
 
-> E1 is the data layer only — there is no HTTP server yet (that's E7). "Deploy" at this stage means pointing `DATABASE_URL` at a cloud Postgres with pgvector.
+> "Deploy" at this stage means pointing `DATABASE_URL` at a cloud Postgres with pgvector, then running the REST API (E7) or Streamlit demo against it.
 
 ### AWS (RDS)
 
@@ -758,8 +797,17 @@ governedmemory/
 │   ├── retrieval_engine/   ← Retrieval Engine (E3)
 │   │   ├── fusion.py             ← Reciprocal rank fusion (vector + lexical)
 │   │   └── privilege_gate.py     ← Taint + record-level purpose enforcement on read
-│   └── policy_engine/      ← Policy Engine (E4)
-│       └── evaluator.py          ← Tenant-level purpose-binding + privileged-action evaluation
+│   ├── policy_engine/      ← Policy Engine (E4)
+│   │   └── evaluator.py          ← Tenant-level purpose-binding + privileged-action evaluation
+│   ├── detection/          ← Detection (E5)
+│   │   ├── classifier.py         ← InjectionClassifier (trained Naive Bayes, pure Python)
+│   │   ├── dataset.py            ← Bundled labeled examples + train/test split
+│   │   ├── metrics.py            ← Precision/recall/F1 evaluation
+│   │   └── scanner.py            ← score_injection() — pluggable heuristic/classifier/ensemble backend
+│   └── audit/              ← Audit Graph (E6)
+│       ├── provenance_graph.py   ← ProvenanceGraph — ancestors()/descendants() over parent_ids edges
+│       ├── cascade_purge.py      ← plan_cascade_purge() — delete-set planner (root + all descendants)
+│       └── verifier.py           ← verify_chain() — recomputes + checks every event's hash, not just linkage
 ├── deploy/
 │   ├── docker-compose.yml  ← Local Postgres+pgvector
 │   └── .env.example
@@ -768,10 +816,13 @@ governedmemory/
 ├── scripts/
 │   ├── demo_data.py        ← Shared demo dataset (one tenant, five customers, 50 memories, one policy)
 │   ├── seed_demo.py        ← Populate the demo tenant
-│   └── categorize_demo.py  ← Readiness report before a live demo
+│   ├── categorize_demo.py  ← Readiness report before a live demo
+│   ├── train_detection.py  ← Train + save an E5 classifier artifact
+│   ├── eval_detection.py   ← Precision/recall/F1 report for E5's detection backends
+│   └── verify_audit.py     ← E6: verify a tenant's audit chain, inspect a memory's provenance
 ├── tests/
-│   ├── unit/               ← 75 tests, no Docker
-│   └── integration/        ← 41 tests, needs Docker
+│   ├── unit/               ← 124 tests, no Docker
+│   └── integration/        ← 54 tests, needs Docker
 ├── CONTRIBUTING.md
 ├── CODE_OF_CONDUCT.md
 ├── SECURITY.md
@@ -800,13 +851,17 @@ governedmemory/
 
 ---
 
-## What's next (E5–E7)
+## What's next (E8+)
+
+E1-E7 are complete: core data models, the Write Governor, the Retrieval Engine, the Policy Engine, a trained injection classifier (E5), the Audit Graph — provenance tree, cascade purge, formal hash-chain verifier (E6) — and a self-hosted FastAPI REST API + `metaworkers` Python SDK (E7), all fronted by a Next.js web console.
 
 | Epic | What it adds |
 |---|---|
-| E5 | Detection — injection classifier (precision/recall tracked) |
-| E6 | Audit Graph — cascade purge, provenance tree, hash-chain verifier |
-| E7 | Python SDK + FastAPI `/v1/` REST API — both merged (server: 6/8 routes, self-hosted via Docker; `metaworkers` thin client on top); provenance/cascade-delete pending E6. Next.js frontend on top of the REST API in progress. |
+| E8 | Framework adapters — LangGraph, Mem0 shims |
+| E9 | React provenance visualizer |
+| E10 | Poisoning attack benchmark library |
+| E12 | CX coworker showcase |
+| E13 | Enterprise RBAC stubs (gated) |
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for how to pick up an epic.
 

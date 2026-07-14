@@ -22,17 +22,6 @@ from core.memory_store import MemoryStore, NullEmbeddingProvider
 from scripts.demo_data import CUSTOMERS, TENANT_ID
 
 
-def verify_audit_chain(store: MemoryStore, tenant_id: str) -> tuple[int, bool]:
-    events = store.list_audit(tenant_id, limit=1000)
-    events = list(reversed(events))  # list_audit returns newest-first; verify oldest-first
-    intact = True
-    for i in range(1, len(events)):
-        if events[i]["prev_hash"] != events[i - 1]["hash"]:
-            intact = False
-            break
-    return len(events), intact
-
-
 def main() -> None:
     load_dotenv()
     dsn = os.environ["DATABASE_URL"]
@@ -68,10 +57,10 @@ def main() -> None:
     print(f"  source breakdown: {dict(total_source)}")
     print(f"  purpose breakdown:{dict(total_purpose)}")
 
-    event_count, chain_intact = verify_audit_chain(store, TENANT_ID)
-    status = "OK — chain intact" if chain_intact else "BROKEN — hash mismatch detected"
-    print(f"\n=== Audit trail ===")
-    print(f"  {event_count} events recorded, hash chain: {status}")
+    result = store.verify_audit_chain(TENANT_ID, limit=1000)
+    status = "OK — chain intact" if result.valid else f"BROKEN — {result.reason}"
+    print("\n=== Audit trail ===")
+    print(f"  {result.total_events} events recorded, hash chain: {status}")
 
     if total_taint.get("untrusted", 0) > 0:
         print(f"\nDemo talking point: {total_taint['untrusted']} memories were auto-tainted 'untrusted' "
