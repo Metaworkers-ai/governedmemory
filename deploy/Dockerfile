@@ -15,6 +15,7 @@ RUN pip install --no-cache-dir -r requirements-core.txt -r requirements-api.txt
 
 COPY core/ core/
 COPY api/ api/
+COPY scripts/ scripts/
 RUN pip install --no-cache-dir --no-deps -e .
 
 ENV PYTHONUNBUFFERED=1
