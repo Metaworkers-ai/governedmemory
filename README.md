@@ -55,7 +55,7 @@ For the REST API + Python SDK instead of the direct-import store, see [REST API 
 
 ## Enterprise
 
-The core governed-memory engine here is open source (MIT) — self-host it, audit it, extend it. For teams that need SSO/RBAC, managed hosting, SLA-backed support, or help integrating it into an existing agent stack, reach out at **jagadish@metaworkers.ai**.
+The core governed-memory engine here is open source (MIT) — self-host it, audit it, extend it. For teams that need SSO/RBAC, managed hosting, SLA-backed support, or help integrating it into an existing agent stack, reach out at **info@metaworkers.ai** or **jagadish@metaworkers.ai**.
 
 ---
 
