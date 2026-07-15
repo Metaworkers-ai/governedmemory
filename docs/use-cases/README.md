@@ -28,6 +28,10 @@ GDPR/CCPA-style purpose limitation, applied to agent memory: a memory collected 
 
 A smaller but real cost center: agents re-writing the same fact every session bloats storage, slows retrieval, and — worse — lets a stale fact keep answering queries after it's been corrected. Automatic dedup and versioning fix this without any caller-side bookkeeping.
 
+## 7. [AI Claims & Underwriting Agents for Insurance](07-insurance-claims-and-underwriting.md)
+
+Industry deep-dive: how the mechanisms above apply specifically to claims and underwriting agents — blocking payout approval on fabricated or injected claim documents, keeping underwriting signals out of claims decisions, isolating books of business across carriers/MGAs, and producing an audit trail a market conduct exam can actually use.
+
 ---
 
 ## Who this is for
