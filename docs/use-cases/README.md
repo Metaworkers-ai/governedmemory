@@ -36,6 +36,14 @@ Industry deep-dive: how the mechanisms above apply specifically to claims and un
 
 Industry deep-dive: the same mechanisms applied to banking and fintech — blocking a payments agent from wiring funds based on a fraudulent "updated remittance details" email (classic BEC), keeping KYC/AML monitoring data out of cross-sell and advisory decisions, isolating accounts across a multi-tenant platform, and producing an audit trail for regulatory exams.
 
+## 9. [AI Recruiting & Talent Acquisition Agents](09-recruiting-and-talent-acquisition.md)
+
+Industry deep-dive grounded in a documented real-world incident: hidden prompt-injection text in a scraped LinkedIn profile hijacking an AI recruiting workflow. Covers blocking hiring-decision actions on unverified/scraped candidate data, keeping one req's candidate data from silently screening another (relevant under NYC Local Law 144-style AEDT rules), staffing-platform tenant isolation, and adverse-action audit trails.
+
+## 10. [AI Legal Research & Contract Review Agents](10-legal-and-contract-review.md)
+
+Industry deep-dive grounded in *Mata v. Avianca* — the landmark case where attorneys were sanctioned for filing ChatGPT-fabricated citations. Covers preventing an agent's own unverified inference (or a planted instruction in opposing counsel's filing) from reaching a document as if it were verified authority, structural matter/client separation (the ethical-wall problem), and a defensible audit trail for challenged citations.
+
 ---
 
 ## Who this is for
