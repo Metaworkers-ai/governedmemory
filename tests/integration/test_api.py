@@ -62,6 +62,30 @@ class TestAuth:
         resp = client.post("/v1/memory", json=_write_body(), headers=_auth(KEY_A))
         assert resp.status_code == 201
 
+    @pytest.mark.parametrize(
+        ("method", "path", "kwargs"),
+        [
+            ("post", "/v1/retrieve", {"json": {"query": "x", "agent_id": "a", "session_id": "s"}}),
+            (
+                "post",
+                "/v1/quarantine",
+                {"json": {"memory_id": "00000000-0000-0000-0000-000000000000"}},
+            ),
+            ("delete", "/v1/memory/00000000-0000-0000-0000-000000000000", {}),
+            ("get", "/v1/memory/00000000-0000-0000-0000-000000000000/cascade-preview", {}),
+            ("get", "/v1/audit", {}),
+            ("get", "/v1/customers", {}),
+            ("get", "/v1/memories?customer_id=cust-1", {}),
+            ("get", "/v1/provenance/00000000-0000-0000-0000-000000000000", {}),
+        ],
+    )
+    def test_every_route_requires_auth(self, client, method, path, kwargs):
+        """TestAuth above only ever proved this for POST /v1/memory --
+        every other route depends on the same require_tenant() dependency
+        (see api/main.py), but nothing asserted that until now."""
+        resp = getattr(client, method)(path, **kwargs)
+        assert resp.status_code == 401
+
 
 class TestWriteAndRetrieve:
     def test_write_returns_created_record(self, client):
@@ -101,6 +125,82 @@ class TestWriteAndRetrieve:
         contents = [r["content"] for r in resp.json()]
         assert any("tenant A" in c for c in contents)
         assert all("tenant B" not in c for c in contents)
+
+    def test_retrieve_excludes_untrusted_by_default_but_include_untrusted_returns_it(self, client):
+        marker = str(uuid.uuid4())
+        client.post(
+            "/v1/memory",
+            json=_write_body(
+                content=f"phishing attempt about a refund {marker}",
+                provenance={
+                    "source_type": "untrusted_email",
+                    "source_ref": "inbound-1",
+                    "confidence": 0.4,
+                },
+            ),
+            headers=_auth(KEY_A),
+        )
+
+        gated = client.post(
+            "/v1/retrieve",
+            json={"query": marker, "agent_id": "cx-1", "session_id": "s-1", "k": 10},
+            headers=_auth(KEY_A),
+        )
+        assert gated.status_code == 200
+        assert all(marker not in r["content"] for r in gated.json())
+
+        ungated = client.post(
+            "/v1/retrieve",
+            json={
+                "query": marker,
+                "agent_id": "cx-1",
+                "session_id": "s-1",
+                "k": 10,
+                "include_untrusted": True,
+            },
+            headers=_auth(KEY_A),
+        )
+        assert ungated.status_code == 200
+        assert any(marker in r["content"] for r in ungated.json())
+
+    def test_retrieve_respects_purpose_binding(self, client):
+        marker = str(uuid.uuid4())
+        client.post(
+            "/v1/memory",
+            json=_write_body(
+                content=f"restricted memory {marker}",
+                purpose={"allowed_purposes": ["cx_support"]},
+            ),
+            headers=_auth(KEY_A),
+        )
+
+        wrong_purpose = client.post(
+            "/v1/retrieve",
+            json={
+                "query": marker,
+                "agent_id": "cx-1",
+                "session_id": "s-1",
+                "k": 10,
+                "purpose": "sales",
+            },
+            headers=_auth(KEY_A),
+        )
+        assert wrong_purpose.status_code == 200
+        assert all(marker not in r["content"] for r in wrong_purpose.json())
+
+        right_purpose = client.post(
+            "/v1/retrieve",
+            json={
+                "query": marker,
+                "agent_id": "cx-1",
+                "session_id": "s-1",
+                "k": 10,
+                "purpose": "cx_support",
+            },
+            headers=_auth(KEY_A),
+        )
+        assert right_purpose.status_code == 200
+        assert any(marker in r["content"] for r in right_purpose.json())
 
 
 class TestQuarantineAndDelete:
@@ -168,6 +268,23 @@ class TestQuarantineAndDelete:
             "/v1/memory/00000000-0000-0000-0000-000000000000?cascade=true", headers=_auth(KEY_A)
         )
         assert resp.status_code == 404
+
+    def test_cascade_preview_of_nonexistent_memory_is_200_with_an_empty_plan(self, client):
+        """Unlike DELETE ?cascade=true, the preview route never calls
+        store.get() to check existence first (see api/main.py) -- it just
+        walks the provenance graph, which tolerates an unknown id as a
+        leaf with no descendants. Documenting the actual behavior rather
+        than the (arguably more intuitive) 404 someone might expect."""
+        resp = client.get(
+            "/v1/memory/00000000-0000-0000-0000-000000000000/cascade-preview",
+            headers=_auth(KEY_A),
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "root_id": "00000000-0000-0000-0000-000000000000",
+            "descendant_ids": [],
+            "descendant_count": 0,
+        }
 
     def test_cannot_quarantine_another_tenants_memory(self, client):
         write_resp = client.post("/v1/memory", json=_write_body(), headers=_auth(KEY_A))
