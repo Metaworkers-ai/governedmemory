@@ -12,7 +12,7 @@ A governed memory layer for enterprise AI agents. Every memory record carries pr
 
 Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for setup and how to pick up an epic, [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community guidelines, and [SECURITY.md](SECURITY.md) to report a vulnerability.
 
-**New here?** Read [Stop Agents From Acting on Poisoned Memory](docs/use-cases/01-privileged-action-fraud-prevention.md) first — it's the concrete scenario (a phishing email trying to trigger a $4,200 refund) that this project exists to prevent, walked through end to end. See [all use cases](docs/use-cases/README.md) for the full list (prompt injection defense, multi-tenant isolation, purpose-limited retrieval, tamper-evident audit trail, memory hygiene, [insurance claims & underwriting](docs/use-cases/07-insurance-claims-and-underwriting.md)).
+**New here?** Read [Stop Agents From Acting on Poisoned Memory](docs/use-cases/01-privileged-action-fraud-prevention.md) first — it's the concrete scenario (a phishing email trying to trigger a $4,200 refund) that this project exists to prevent, walked through end to end. See [all use cases](docs/use-cases/README.md) for the full list (prompt injection defense, multi-tenant isolation, purpose-limited retrieval, tamper-evident audit trail, memory hygiene, [insurance claims & underwriting](docs/use-cases/07-insurance-claims-and-underwriting.md), [financial services payments & lending](docs/use-cases/08-financial-services-payments-and-lending.md)).
 
 ---
 

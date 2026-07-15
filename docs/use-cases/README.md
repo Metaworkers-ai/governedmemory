@@ -32,6 +32,10 @@ A smaller but real cost center: agents re-writing the same fact every session bl
 
 Industry deep-dive: how the mechanisms above apply specifically to claims and underwriting agents — blocking payout approval on fabricated or injected claim documents, keeping underwriting signals out of claims decisions, isolating books of business across carriers/MGAs, and producing an audit trail a market conduct exam can actually use.
 
+## 8. [AI Payments, Lending & Advisory Agents for Financial Services](08-financial-services-payments-and-lending.md)
+
+Industry deep-dive: the same mechanisms applied to banking and fintech — blocking a payments agent from wiring funds based on a fraudulent "updated remittance details" email (classic BEC), keeping KYC/AML monitoring data out of cross-sell and advisory decisions, isolating accounts across a multi-tenant platform, and producing an audit trail for regulatory exams.
+
 ---
 
 ## Who this is for
