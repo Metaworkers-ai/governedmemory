@@ -28,11 +28,20 @@ results = mem.retrieve(
 mem.quarantine("mem-uuid")
 mem.delete("mem-uuid")
 events = mem.audit()
+
+# E6 — provenance lineage + cascade purge
+lineage = mem.provenance("mem-uuid")          # {memory_id, ancestors, descendants}
+plan = mem.cascade_preview("mem-uuid")        # dry run: what cascade delete would remove
+mem.delete("mem-uuid", cascade=True)          # hard-delete it and everything derived from it
+
+# Listing (no query/ranking/gate — plain reads)
+customers = mem.list_customers()
+memories = mem.list_memories("cust-1")
 ```
 
 ## Status
 
-Covers `write`, `retrieve`, `quarantine`, `delete` (non-cascade), and `audit`. `provenance()` and `delete(..., cascade=True)` raise `GovernedMemoryError` with a 501 status until the server's E6 work (provenance graph traversal) lands — they're included now so this client won't need a breaking change once it does.
+Covers every route the server (E7) exposes: `write`, `retrieve`, `quarantine`, `delete` (including `cascade=True`, backed by E6's provenance graph), `cascade_preview`, `provenance`, `audit`, `list_customers`, and `list_memories`.
 
 ## Errors
 

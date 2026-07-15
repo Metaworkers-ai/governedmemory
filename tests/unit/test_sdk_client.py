@@ -175,14 +175,67 @@ class TestErrorHandling:
         assert exc_info.value.detail == "Internal Server Error"
 
     @patch("urllib.request.urlopen")
-    def test_delete_cascade_not_implemented_raises_501(self, mock_urlopen, client):
+    def test_error_response_propagates_arbitrary_status_code(self, mock_urlopen, client):
         mock_urlopen.side_effect = urllib.error.HTTPError(
             url="http://localhost:8000/v1/memory/mem-1",
             code=501,
             msg="Not Implemented",
             hdrs=None,
-            fp=io.BytesIO(json.dumps({"detail": "cascade purge needs E6"}).encode()),
+            fp=io.BytesIO(json.dumps({"detail": "not implemented"}).encode()),
         )
         with pytest.raises(GovernedMemoryError) as exc_info:
             client.delete("mem-1", cascade=True)
         assert exc_info.value.status_code == 501
+
+
+class TestProvenanceAndCascade:
+    """E6 routes -- provenance lineage, cascade preview/delete. These are
+    live server-side (see api/main.py); the client used to have stale
+    docstrings claiming otherwise."""
+
+    @patch("urllib.request.urlopen")
+    def test_provenance_gets_v1_provenance(self, mock_urlopen, client):
+        _mock_json_response(
+            mock_urlopen, {"memory_id": "mem-1", "ancestors": ["mem-0"], "descendants": []}
+        )
+        result = client.provenance("mem-1")
+        sent_req = mock_urlopen.call_args[0][0]
+        assert sent_req.full_url == "http://localhost:8000/v1/provenance/mem-1"
+        assert sent_req.get_method() == "GET"
+        assert result == {"memory_id": "mem-1", "ancestors": ["mem-0"], "descendants": []}
+
+    @patch("urllib.request.urlopen")
+    def test_cascade_preview_gets_cascade_preview_route(self, mock_urlopen, client):
+        _mock_json_response(
+            mock_urlopen, {"root_id": "mem-1", "descendant_ids": ["mem-2"], "descendant_count": 1}
+        )
+        result = client.cascade_preview("mem-1")
+        sent_req = mock_urlopen.call_args[0][0]
+        assert sent_req.full_url == "http://localhost:8000/v1/memory/mem-1/cascade-preview"
+        assert sent_req.get_method() == "GET"
+        assert result["descendant_count"] == 1
+
+    @patch("urllib.request.urlopen")
+    def test_delete_cascade_true_sends_cascade_query_param(self, mock_urlopen, client):
+        _mock_json_response(mock_urlopen, {"success": True})
+        assert client.delete("mem-1", cascade=True) is True
+        sent_req = mock_urlopen.call_args[0][0]
+        assert sent_req.full_url == "http://localhost:8000/v1/memory/mem-1?cascade=true"
+
+
+class TestListing:
+    @patch("urllib.request.urlopen")
+    def test_list_customers_gets_v1_customers(self, mock_urlopen, client):
+        _mock_json_response(mock_urlopen, [{"customer_id": "c1", "memory_count": 3}])
+        result = client.list_customers()
+        sent_req = mock_urlopen.call_args[0][0]
+        assert sent_req.full_url == "http://localhost:8000/v1/customers"
+        assert result == [{"customer_id": "c1", "memory_count": 3}]
+
+    @patch("urllib.request.urlopen")
+    def test_list_memories_sends_customer_id_as_query_param(self, mock_urlopen, client):
+        _mock_json_response(mock_urlopen, [])
+        client.list_memories("cust-1")
+        sent_req = mock_urlopen.call_args[0][0]
+        assert sent_req.full_url == "http://localhost:8000/v1/memories?customer_id=cust-1"
+        assert sent_req.get_method() == "GET"

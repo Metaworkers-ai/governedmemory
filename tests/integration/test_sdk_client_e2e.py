@@ -72,3 +72,69 @@ def test_wrong_api_key_raises_governedmemoryerror(live_server_url):
     with pytest.raises(GovernedMemoryError) as exc_info:
         mem.audit()
     assert exc_info.value.status_code == 401
+
+
+def test_list_customers_and_memories_over_a_real_socket(live_server_url):
+    mem = GovernedMemory(base_url=live_server_url, api_key=API_KEY)
+    customer_id = f"cust-{uuid.uuid4()}"
+
+    mem.write(
+        customer_id=customer_id,
+        agent_id="cx-1",
+        session_id="s-1",
+        content="prefers email contact",
+        source=Source(type="user", ref="msg-1", confidence=0.9),
+    )
+
+    customers = mem.list_customers()
+    assert any(c["customer_id"] == customer_id for c in customers)
+
+    memories = mem.list_memories(customer_id)
+    assert len(memories) == 1
+    assert memories[0]["customer_id"] == customer_id
+
+
+def test_provenance_and_cascade_delete_over_a_real_socket(live_server_url):
+    mem = GovernedMemory(base_url=live_server_url, api_key=API_KEY)
+
+    root = mem.write(
+        customer_id="cust-1",
+        agent_id="cx-1",
+        session_id="s-1",
+        content="root memory",
+        source=Source(type="user", ref="msg-1", confidence=0.9),
+    )
+    # provenance edges live on Provenance.parent_ids -- not exposed as a
+    # write() kwarg on this thin client, so set it directly via the
+    # underlying request for this one test.
+    derived = mem._request(
+        "POST",
+        "/v1/memory",
+        json_body={
+            "customer_id": "cust-1",
+            "agent_id": "cx-1",
+            "session_id": "s-1",
+            "content": "derived from root",
+            "provenance": {
+                "source_type": "trusted_system",
+                "source_ref": "derived",
+                "confidence": 0.9,
+                "parent_ids": [root["id"]],
+            },
+        },
+    )
+
+    preview = mem.cascade_preview(root["id"])
+    assert preview["root_id"] == root["id"]
+    assert preview["descendant_ids"] == [derived["id"]]
+    assert preview["descendant_count"] == 1
+
+    lineage = mem.provenance(root["id"])
+    assert lineage["memory_id"] == root["id"]
+    assert lineage["descendants"] == preview["descendant_ids"]
+
+    assert mem.delete(root["id"], cascade=True) is True
+
+    # root and its derived descendant are both gone
+    remaining = mem.list_memories("cust-1")
+    assert all(m["id"] not in (root["id"], derived["id"]) for m in remaining)
