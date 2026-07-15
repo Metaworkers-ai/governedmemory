@@ -41,7 +41,7 @@ For REST API + Python SDK details, see [REST API (E7)](#rest-api-e7--self-hosted
 
 ## Enterprise
 
-The core governed-memory engine here is open source (MIT) — self-host it, audit it, extend it. For teams that need SSO/RBAC, managed hosting, SLA-backed support, or help integrating it into an existing agent stack, reach out at **jagadish@metaworkers.ai**.
+The core governed-memory engine here is open source (MIT) — self-host it, audit it, extend it. For teams that need SSO/RBAC, managed hosting, SLA-backed support, or help integrating it into an existing agent stack, reach out at **info@metaworkers.ai** or **jagadish@metaworkers.ai**.
 
 ---
 
