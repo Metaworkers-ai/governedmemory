@@ -160,20 +160,37 @@ class GovernedMemory:
         return resp["success"]
 
     def delete(self, memory_id: str, cascade: bool = False) -> bool:
-        """Delete a memory. cascade=True currently raises GovernedMemoryError
-        (501) -- cascade purge needs E6's provenance graph traversal, not
-        built server-side yet."""
+        """Delete a memory. cascade=True also hard-deletes every memory
+        transitively derived from it (E6's provenance graph) -- irreversible,
+        same as a plain delete. Use cascade_preview() first to see the delete
+        set without touching the database."""
         resp = self._request(
             "DELETE", f"/v1/memory/{memory_id}", query={"cascade": str(cascade).lower()}
         )
         return resp["success"]
+
+    def cascade_preview(self, memory_id: str) -> dict:
+        """Dry-run for delete(memory_id, cascade=True): what would be
+        deleted -- {root_id, descendant_ids, descendant_count} -- without
+        deleting anything."""
+        return self._request("GET", f"/v1/memory/{memory_id}/cascade-preview")
 
     def audit(self, limit: int = 50) -> list[dict]:
         """Most recent audit events for this tenant, newest first."""
         return self._request("GET", "/v1/audit", query={"limit": limit})
 
     def provenance(self, memory_id: str) -> dict:
-        """Not yet supported server-side -- raises GovernedMemoryError(501)
-        until E6's provenance graph traversal is built. Included now so
-        this client doesn't need a breaking change once it lands."""
+        """A memory's lineage (E6): {memory_id, ancestors, descendants},
+        each a list of memory ids walked transitively over parent_ids."""
         return self._request("GET", f"/v1/provenance/{memory_id}")
+
+    def list_customers(self) -> list[dict]:
+        """Distinct customers for this tenant, with memory counts and last
+        activity -- for navigation UIs."""
+        return self._request("GET", "/v1/customers")
+
+    def list_memories(self, customer_id: str) -> list[dict]:
+        """All memories for one customer, newest first. Unlike retrieve(),
+        this applies no query, ranking, or privilege gate -- a plain listing
+        scoped by customer_id only."""
+        return self._request("GET", "/v1/memories", query={"customer_id": customer_id})
