@@ -3,10 +3,13 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CI](https://github.com/Metaworkers-ai/governedmemory/actions/workflows/ci.yml/badge.svg)](https://github.com/Metaworkers-ai/governedmemory/actions/workflows/ci.yml)
 [![Website](https://img.shields.io/badge/website-governed--memory-2E6F5E)](https://d1t8rv0ba48g0k.cloudfront.net)
+[![Discord](https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&logoColor=white)](https://discord.gg/4XFAyrMYa6)
 
 A governed memory layer for enterprise AI agents. Every memory record carries provenance, trust labels, purpose bindings, and a tamper-evident audit trail. Agents read only what they're allowed to read.
 
 **[→ Project site](https://d1t8rv0ba48g0k.cloudfront.net)** — the problem this solves, how the governance pipeline works, and what's live today (source: [`site/`](site/)).
+
+**[→ Join the Discord community](https://discord.gg/4XFAyrMYa6)** — ask questions, share ideas, get support, and contribute to Governed Memory.
 
 **Current status:** E1 + E2 + E3 + E4 + E5 + E6 + E7 complete — core data models, Postgres+pgvector store, a Write Governor pipeline (injection scanning + dedup), a governed Retrieval Engine (hybrid search + a real privilege gate), a Policy Engine (purpose-binding + privileged-action evaluation), a Detection module (trained injection classifier with tracked precision/recall), an Audit Graph (provenance lineage, cascade purge, a formal hash-chain verifier), and a self-hosted REST API covering memory/retrieve/quarantine/delete/audit/customers/memories (plus a thin `metaworkers` Python client) sit in front of every write and every read. A Next.js frontend on top of the REST API replaces the earlier Streamlit demo.
 
