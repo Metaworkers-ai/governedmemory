@@ -170,16 +170,39 @@ if [ "$api_ok" -ne 1 ] || [ "$web_ok" -ne 1 ]; then
   exit 1
 fi
 
-cat <<'EOF'
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  bold_green=$'\033[1;32m'
+  bold_cyan=$'\033[1;36m'
+  bold=$'\033[1m'
+  reset=$'\033[0m'
+  osc8_start=$'\033]8;;'
+  osc8_end=$'\033]8;;\033\\'
+else
+  bold_green=""
+  bold_cyan=""
+  bold=""
+  reset=""
+  osc8_start=""
+  osc8_end=""
+fi
 
-GovernedMemory is ready.
+print_link() {
+  local url="$1"
+  local label="${2:-$url}"
+  if [ -n "$osc8_start" ]; then
+    printf '%s%s%s%s%s\n' "$osc8_start" "$url" $'\033\\' "$bold_cyan$label$reset" "$osc8_end"
+  else
+    printf '%s%s%s\n' "$bold_cyan" "$label" "$reset"
+  fi
+}
 
-Web console: http://localhost:3000
-API health:  http://localhost:8000/healthz
-
-Next steps:
-1. Open the web console.
-2. Go to Write.
-3. Submit the example injection text from the README.
-4. Open Audit Log to inspect the blocked event.
-EOF
+printf '\n%sGovernedMemory is ready.%s\n\n' "$bold_green" "$reset"
+printf '%sWeb console:%s ' "$bold" "$reset"
+print_link 'http://localhost:3000'
+printf '%sAPI health:%s  ' "$bold" "$reset"
+print_link 'http://localhost:8000/healthz'
+printf '\n%sNext steps:%s\n' "$bold" "$reset"
+printf '1. Open the web console.\n'
+printf '2. Go to %sWrite%s.\n' "$bold_cyan" "$reset"
+printf '3. Submit the example injection text from the README.\n'
+printf '4. Open %sAudit Log%s to inspect the blocked event.\n' "$bold_cyan" "$reset"

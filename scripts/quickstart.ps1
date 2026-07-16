@@ -121,16 +121,43 @@ if (-not ($apiReady -and $webReady)) {
     exit 1
 }
 
-Write-Host @"
+$supportsAnsi = $Host.UI.SupportsVirtualTerminal
+if ($supportsAnsi -and -not $env:NO_COLOR) {
+    $esc = [char]27
+    $boldGreen = "$esc[1;32m"
+    $boldCyan = "$esc[1;36m"
+    $bold = "$esc[1m"
+    $reset = "$esc[0m"
+    $osc8Start = "$esc]8;;"
+    $osc8End = "$esc]8;;$esc\"
+} else {
+    $boldGreen = ""
+    $boldCyan = ""
+    $bold = ""
+    $reset = ""
+    $osc8Start = ""
+    $osc8End = ""
+}
 
-GovernedMemory is ready.
+function Write-Link {
+    param([string]$Url, [string]$Label = $Url)
+    if ($osc8Start) {
+        Write-Host ($osc8Start + $Url + $esc + "\" + $boldCyan + $Label + $reset + $osc8End)
+    } else {
+        Write-Host "$boldCyan$Label$reset"
+    }
+}
 
-Web console: http://localhost:3000
-API health:  http://localhost:8000/healthz
-
-Next steps:
-1. Open the web console.
-2. Go to Write.
-3. Submit the example injection text from the README.
-4. Open Audit Log to inspect the blocked event.
-"@
+Write-Host ""
+Write-Host ($boldGreen + "GovernedMemory is ready." + $reset)
+Write-Host ""
+Write-Host -NoNewline ($bold + "Web console:" + $reset + " ")
+Write-Link "http://localhost:3000"
+Write-Host -NoNewline ($bold + "API health:" + $reset + "  ")
+Write-Link "http://localhost:8000/healthz"
+Write-Host ""
+Write-Host ($bold + "Next steps:" + $reset)
+Write-Host "1. Open the web console."
+Write-Host ("2. Go to " + $boldCyan + "Write" + $reset + ".")
+Write-Host "3. Submit the example injection text from the README."
+Write-Host ("4. Open " + $boldCyan + "Audit Log" + $reset + " to inspect the blocked event.")
