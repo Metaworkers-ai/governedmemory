@@ -13,4 +13,5 @@ build/
 .coverage
 htmlcov/
 *.pth
+docs/adoption-execution-plan.md
 .claude/settings.local.json
