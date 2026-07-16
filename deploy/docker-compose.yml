@@ -5,14 +5,14 @@
 # GCP Cloud SQL, Azure Postgres, Supabase, Neon, etc.
 # Only this docker-compose file is environment-specific.
 #
-# Start:   docker compose -f deploy/docker-compose.yml up -d
+# Start:   ./scripts/quickstart.sh
 # Start + seed demo data (one tenant, five customers, 50 memories):
-#          docker compose -f deploy/docker-compose.yml --profile seed up -d
-# Stop:    docker compose -f deploy/docker-compose.yml down
-# Reset:   docker compose -f deploy/docker-compose.yml down -v   (deletes data)
+#          ./scripts/quickstart.sh
+# Stop:    ./scripts/quickstart.sh down
+# Reset:   ./scripts/quickstart.sh reset   (deletes demo data)
 #
-# Console:  http://localhost:3000
-# API:      http://localhost:8000
+# Console:  http://localhost:${WEB_HOST_PORT:-3000}
+# API:      http://localhost:${API_HOST_PORT:-8000}
 #
 # GOVERNEDMEMORY_API_KEY (default "demo-key") is the one key the web console
 # authenticates with -- it must be one of the tenant:key pairs in
@@ -43,6 +43,20 @@ services:
       retries: 10
     restart: unless-stopped
 
+  # Run schema initialization once before the API or seed can touch the data.
+  # Keeping this separate from the API and seed prevents concurrent DDL from
+  # racing with seed writes on a clean database.
+  schema:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://mw:mw_dev_password@postgres:5432/governedmemory
+    command: ["python", "-c", "import os; from core.memory_store import init_db; init_db(os.environ['DATABASE_URL'])"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   api:
     build:
       context: ..
@@ -52,10 +66,16 @@ services:
       # Override with your own tenant:key pairs — this default is dev-only.
       GOVERNEDMEMORY_API_KEYS: ${GOVERNEDMEMORY_API_KEYS:-solstice-cloud:demo-key}
     ports:
-      - "8000:8000"
+      - "${API_HOST_PORT:-8000}:8000"
     depends_on:
-      postgres:
-        condition: service_healthy
+      schema:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=2)\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
     restart: unless-stopped
 
   web:
@@ -66,18 +86,20 @@ services:
       GOVERNEDMEMORY_API_URL: http://api:8000
       GOVERNEDMEMORY_API_KEY: ${GOVERNEDMEMORY_API_KEY:-demo-key}
     ports:
-      - "3000:3000"
+      - "${WEB_HOST_PORT:-3000}:3000"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     restart: unless-stopped
 
   # Optional one-shot job: populates the demo tenant (scripts/demo_data.py --
   # one company, five customers, 50 memories, mixed trusted/untrusted/
   # quarantined, one purpose-binding policy) so `--profile seed up` gives a
   # cold clone something to look at in the console immediately. Talks
-  # directly to Postgres, not through the API, so it only waits on that
-  # healthcheck. Reuses the `api` image (already has core/ + scripts/ + deps)
-  # rather than building a separate one.
+  # directly to Postgres, not through the API, but waits for the API healthcheck
+  # so schema initialization has completed before writes begin. Reuses the
+  # `api` image (already has core/ + scripts/ + deps) rather than building a
+  # separate one.
   seed:
     build:
       context: ..
@@ -86,7 +108,7 @@ services:
       DATABASE_URL: postgresql://mw:mw_dev_password@postgres:5432/governedmemory
     command: ["python", "scripts/seed_demo.py", "--reset"]
     depends_on:
-      postgres:
+      api:
         condition: service_healthy
     profiles: ["seed"]
 

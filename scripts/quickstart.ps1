@@ -1,7 +1,18 @@
-# Start the local GovernedMemory demo from Windows PowerShell.
+# Start, stop, or reset the local GovernedMemory demo from Windows PowerShell.
+
+param(
+    [ValidateSet("up", "down", "reset")]
+    [string]$Action = "up"
+)
 
 $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")
+
+$composeFile = "deploy/docker-compose.yml"
+function Invoke-Compose {
+    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
+    docker compose -f $composeFile @Arguments
+}
 
 if (-not $env:COMPOSE_PROJECT_NAME) {
     $projectName = (Split-Path -Leaf (Get-Location)).ToLower() -replace "[^a-z0-9_-]", "-"
@@ -51,45 +62,99 @@ Start Docker Desktop manually, wait for it to finish loading, and rerun:
 "@
 }
 
-$postgresPort = $env:POSTGRES_HOST_PORT
-if (-not $postgresPort) {
-    $existingPostgres = docker compose -f deploy/docker-compose.yml ps -q postgres 2>$null
-    $existingPort = ""
-    if ($existingPostgres) {
-        $existingPort = (docker port $existingPostgres 5432/tcp 2>$null | Select-Object -First 1) -replace ".*:", ""
-    }
+if ($Action -eq "down") {
+    Write-Host "Stopping Compose project '$env:COMPOSE_PROJECT_NAME' (volumes preserved)..."
+    Invoke-Compose -Arguments @("down")
+    exit $LASTEXITCODE
+}
 
-    $postgresPort = if ($existingPort) { $existingPort } else { 5432 }
-    $portBusy = Get-NetTCPConnection -LocalPort $postgresPort -State Listen -ErrorAction SilentlyContinue
-    if (-not $existingPort -and $portBusy) {
-        $foundPort = $false
-        5433..5442 | ForEach-Object {
-            if (-not $foundPort) {
-                $candidateBusy = Get-NetTCPConnection -LocalPort $_ -State Listen -ErrorAction SilentlyContinue
-                if (-not $candidateBusy) { $postgresPort = $_; $foundPort = $true }
-            }
-        }
-        if (-not $foundPort) {
-            Write-Error "Host ports 5432-5442 are all busy; stop one or set POSTGRES_HOST_PORT manually."
-        }
-        Write-Host "Host port 5432 is busy; using Postgres host port $postgresPort instead."
+if ($Action -eq "reset") {
+    Write-Host "WARNING: resetting Compose project '$env:COMPOSE_PROJECT_NAME' will delete its demo data and volumes."
+    Write-Host "Removing containers, networks, and volumes..."
+    Invoke-Compose -Arguments @("down", "-v")
+    exit $LASTEXITCODE
+}
+
+function Test-HostPortBusy {
+    param([int]$Port)
+    return [bool](Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
+}
+
+function Get-ExistingMappedPort {
+    param([string]$Service, [int]$ContainerPort)
+    $container = Invoke-Compose -Arguments @("ps", "-aq", $Service) 2>$null | Select-Object -First 1
+    if (-not $container) { return $null }
+    $raw = docker inspect -f '{{json .HostConfig.PortBindings}}' $container 2>$null
+    if (-not $raw) { return $null }
+    try {
+        $bindings = $raw | ConvertFrom-Json
+        $property = $bindings.PSObject.Properties | Where-Object { $_.Name -eq "$ContainerPort/tcp" } | Select-Object -First 1
+        if ($property -and $property.Value) { return [int]$property.Value[0].HostPort }
+    } catch {}
+    return $null
+}
+
+function Resolve-HostPort {
+    param([string]$EnvironmentName, [string]$Service, [int]$ContainerPort, [int]$DefaultPort, [int]$MaxPort)
+    $requested = [Environment]::GetEnvironmentVariable($EnvironmentName)
+    if ($requested) { return [int]$requested }
+    $existing = Get-ExistingMappedPort $Service $ContainerPort
+    if ($existing) { return $existing }
+    for ($candidate = $DefaultPort; $candidate -le $MaxPort; $candidate++) {
+        if (-not (Test-HostPortBusy $candidate)) { return $candidate }
+    }
+    throw "Host ports $DefaultPort-$MaxPort are all busy; stop one or set $EnvironmentName manually."
+}
+
+$postgresPortSupplied = $env:POSTGRES_HOST_PORT
+$apiPortSupplied = $env:API_HOST_PORT
+$webPortSupplied = $env:WEB_HOST_PORT
+$postgresExistingPort = Get-ExistingMappedPort postgres 5432
+$apiExistingPort = Get-ExistingMappedPort api 8000
+$webExistingPort = Get-ExistingMappedPort web 3000
+$postgresPort = Resolve-HostPort POSTGRES_HOST_PORT postgres 5432 5432 5442
+$apiPort = Resolve-HostPort API_HOST_PORT api 8000 8000 8010
+$webPort = Resolve-HostPort WEB_HOST_PORT web 3000 3000 3010
+$env:POSTGRES_HOST_PORT = $postgresPort
+$env:API_HOST_PORT = $apiPort
+$env:WEB_HOST_PORT = $webPort
+if (-not $postgresPortSupplied -and -not $postgresExistingPort -and $postgresPort -ne 5432) { Write-Host "Host port 5432 is busy; using Postgres host port $postgresPort instead." }
+if (-not $apiPortSupplied -and -not $apiExistingPort -and $apiPort -ne 8000) { Write-Host "Host port 8000 is busy; using API host port $apiPort instead." }
+if (-not $webPortSupplied -and -not $webExistingPort -and $webPort -ne 3000) { Write-Host "Host port 3000 is busy; using web host port $webPort instead." }
+
+function Write-Diagnostics {
+    param([string]$FailedService)
+    Write-Host "Quickstart failed for Compose project '$env:COMPOSE_PROJECT_NAME'."
+    Write-Host "Host ports: Postgres $env:POSTGRES_HOST_PORT, API $env:API_HOST_PORT, Web $env:WEB_HOST_PORT"
+    Invoke-Compose -Arguments @("ps")
+    if ($FailedService -eq "startup") {
+        $services = @("postgres", "schema", "api", "seed", "web")
+    } else {
+        $services = @($FailedService)
+    }
+    foreach ($service in $services) {
+        Write-Host "--- recent $service logs ---"
+        Invoke-Compose -Arguments @("logs", "--tail=50", $service)
     }
 }
-$env:POSTGRES_HOST_PORT = $postgresPort
 
 Write-Host "Docker is ready. Starting GovernedMemory..."
-docker compose -f deploy/docker-compose.yml --profile seed up --build -d
+Invoke-Compose -Arguments @("--profile", "seed", "up", "--build", "-d")
+if ($LASTEXITCODE -ne 0) {
+    Write-Diagnostics "startup"
+    exit $LASTEXITCODE
+}
 
 Write-Host "Waiting for the demo seed and application health..."
 $seedContainer = ""
 for ($i = 0; $i -lt 60; $i++) {
-    $seedContainer = (docker compose -f deploy/docker-compose.yml ps -aq seed 2>$null | Select-Object -First 1)
+    $seedContainer = (Invoke-Compose -Arguments @("ps", "-aq", "seed") 2>$null | Select-Object -First 1)
     if ($seedContainer) {
         $seedState = docker inspect -f '{{.State.Status}} {{.State.ExitCode}}' $seedContainer 2>$null
         if ($seedState -eq "exited 0") { break }
         if ($seedState -like "exited *") {
-            Write-Host "The demo seed failed ($seedState). Recent seed logs:"
-            docker compose -f deploy/docker-compose.yml logs --tail=50 seed
+            Write-Host "The demo seed failed ($seedState)."
+            Write-Diagnostics "seed"
             exit 1
         }
     }
@@ -97,8 +162,8 @@ for ($i = 0; $i -lt 60; $i++) {
 }
 
 if (-not $seedContainer -or (docker inspect -f '{{.State.Status}} {{.State.ExitCode}}' $seedContainer 2>$null) -ne "exited 0") {
-    Write-Host "The demo seed did not finish within 60 seconds. Recent seed logs:"
-    docker compose -f deploy/docker-compose.yml logs --tail=50 seed
+    Write-Host "The demo seed did not finish within 60 seconds."
+    Write-Diagnostics "seed"
     exit 1
 }
 
@@ -106,18 +171,23 @@ $apiReady = $false
 $webReady = $false
 for ($i = 0; $i -lt 60; $i++) {
     if (-not $apiReady) {
-        try { Invoke-WebRequest -UseBasicParsing -Uri "http://localhost:8000/healthz" -TimeoutSec 2 | Out-Null; $apiReady = $true } catch {}
+        try { Invoke-WebRequest -UseBasicParsing -Uri "http://localhost:$apiPort/healthz" -TimeoutSec 2 | Out-Null; $apiReady = $true } catch {}
     }
     if (-not $webReady) {
-        try { Invoke-WebRequest -UseBasicParsing -Uri "http://localhost:3000" -TimeoutSec 2 | Out-Null; $webReady = $true } catch {}
+        try { Invoke-WebRequest -UseBasicParsing -Uri "http://localhost:$webPort" -TimeoutSec 2 | Out-Null; $webReady = $true } catch {}
     }
     if ($apiReady -and $webReady) { break }
     Start-Sleep -Seconds 1
 }
 
 if (-not ($apiReady -and $webReady)) {
-    Write-Host "The GovernedMemory services did not become ready within 60 seconds."
-    docker compose -f deploy/docker-compose.yml ps
+    if (-not $apiReady) {
+        Write-Host "The API did not become ready within 60 seconds."
+        Write-Diagnostics "api"
+    } else {
+        Write-Host "The web console did not become ready within 60 seconds."
+        Write-Diagnostics "web"
+    }
     exit 1
 }
 
@@ -152,9 +222,9 @@ Write-Host ""
 Write-Host ($boldGreen + "GovernedMemory is ready." + $reset)
 Write-Host ""
 Write-Host -NoNewline ($bold + "Web console:" + $reset + " ")
-Write-Link "http://localhost:3000"
+Write-Link "http://localhost:$webPort"
 Write-Host -NoNewline ($bold + "API health:" + $reset + "  ")
-Write-Link "http://localhost:8000/healthz"
+Write-Link "http://localhost:$apiPort/healthz"
 Write-Host ""
 Write-Host ($bold + "Next steps:" + $reset)
 Write-Host "1. Open the web console."
