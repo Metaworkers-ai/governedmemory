@@ -29,7 +29,9 @@ services:
       POSTGRES_USER: mw
       POSTGRES_PASSWORD: mw_dev_password   # override in production via secrets manager
     ports:
-      - "5432:5432"
+      # The Quickstart wrapper selects another free host port when 5432 is busy.
+      # Containers still reach Postgres at postgres:5432 on the internal network.
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
