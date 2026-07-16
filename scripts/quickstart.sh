@@ -109,4 +109,77 @@ fi
 export POSTGRES_HOST_PORT
 
 echo "Docker is ready. Starting GovernedMemory..."
-exec docker compose -f deploy/docker-compose.yml --profile seed up --build -d
+docker compose -f deploy/docker-compose.yml --profile seed up --build -d
+
+api_ready() {
+  if command -v curl >/dev/null 2>&1; then
+    curl --fail --silent --show-error http://localhost:8000/healthz >/dev/null 2>&1
+  else
+    docker compose -f deploy/docker-compose.yml exec -T api \
+      python -c 'import urllib.request; urllib.request.urlopen("http://localhost:8000/healthz", timeout=2)' \
+      >/dev/null 2>&1
+  fi
+}
+
+web_ready() {
+  if command -v curl >/dev/null 2>&1; then
+    curl --fail --silent --show-error --output /dev/null http://localhost:3000
+  else
+    docker compose -f deploy/docker-compose.yml exec -T web \
+      node -e 'fetch("http://localhost:3000").then(r => process.exit(r.status < 500 ? 0 : 1)).catch(() => process.exit(1))' \
+      >/dev/null 2>&1
+  fi
+}
+
+echo "Waiting for the demo seed and application health..."
+seed_container=""
+for _ in $(seq 1 60); do
+  seed_container="$(docker compose -f deploy/docker-compose.yml ps -aq seed 2>/dev/null | head -n 1)"
+  if [ -n "$seed_container" ]; then
+    seed_state="$(docker inspect -f '{{.State.Status}} {{.State.ExitCode}}' "$seed_container" 2>/dev/null || true)"
+    case "$seed_state" in
+      "exited 0") break ;;
+      exited\ *)
+        echo "The demo seed failed ($seed_state). Recent seed logs:" >&2
+        docker compose -f deploy/docker-compose.yml logs --tail=50 seed >&2 || true
+        exit 1
+        ;;
+    esac
+  fi
+  sleep 1
+done
+
+if [ -z "$seed_container" ] || [ "$(docker inspect -f '{{.State.Status}} {{.State.ExitCode}}' "$seed_container" 2>/dev/null || true)" != "exited 0" ]; then
+  echo "The demo seed did not finish within 60 seconds. Recent seed logs:" >&2
+  docker compose -f deploy/docker-compose.yml logs --tail=50 seed >&2 || true
+  exit 1
+fi
+
+api_ok=0
+web_ok=0
+for _ in $(seq 1 60); do
+  if [ "$api_ok" -eq 0 ] && api_ready; then api_ok=1; fi
+  if [ "$web_ok" -eq 0 ] && web_ready; then web_ok=1; fi
+  [ "$api_ok" -eq 1 ] && [ "$web_ok" -eq 1 ] && break
+  sleep 1
+done
+
+if [ "$api_ok" -ne 1 ] || [ "$web_ok" -ne 1 ]; then
+  echo "The GovernedMemory services did not become ready within 60 seconds." >&2
+  docker compose -f deploy/docker-compose.yml ps >&2 || true
+  exit 1
+fi
+
+cat <<'EOF'
+
+GovernedMemory is ready.
+
+Web console: http://localhost:3000
+API health:  http://localhost:8000/healthz
+
+Next steps:
+1. Open the web console.
+2. Go to Write.
+3. Submit the example injection text from the README.
+4. Open Audit Log to inspect the blocked event.
+EOF

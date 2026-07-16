@@ -79,3 +79,58 @@ $env:POSTGRES_HOST_PORT = $postgresPort
 
 Write-Host "Docker is ready. Starting GovernedMemory..."
 docker compose -f deploy/docker-compose.yml --profile seed up --build -d
+
+Write-Host "Waiting for the demo seed and application health..."
+$seedContainer = ""
+for ($i = 0; $i -lt 60; $i++) {
+    $seedContainer = (docker compose -f deploy/docker-compose.yml ps -aq seed 2>$null | Select-Object -First 1)
+    if ($seedContainer) {
+        $seedState = docker inspect -f '{{.State.Status}} {{.State.ExitCode}}' $seedContainer 2>$null
+        if ($seedState -eq "exited 0") { break }
+        if ($seedState -like "exited *") {
+            Write-Host "The demo seed failed ($seedState). Recent seed logs:"
+            docker compose -f deploy/docker-compose.yml logs --tail=50 seed
+            exit 1
+        }
+    }
+    Start-Sleep -Seconds 1
+}
+
+if (-not $seedContainer -or (docker inspect -f '{{.State.Status}} {{.State.ExitCode}}' $seedContainer 2>$null) -ne "exited 0") {
+    Write-Host "The demo seed did not finish within 60 seconds. Recent seed logs:"
+    docker compose -f deploy/docker-compose.yml logs --tail=50 seed
+    exit 1
+}
+
+$apiReady = $false
+$webReady = $false
+for ($i = 0; $i -lt 60; $i++) {
+    if (-not $apiReady) {
+        try { Invoke-WebRequest -UseBasicParsing -Uri "http://localhost:8000/healthz" -TimeoutSec 2 | Out-Null; $apiReady = $true } catch {}
+    }
+    if (-not $webReady) {
+        try { Invoke-WebRequest -UseBasicParsing -Uri "http://localhost:3000" -TimeoutSec 2 | Out-Null; $webReady = $true } catch {}
+    }
+    if ($apiReady -and $webReady) { break }
+    Start-Sleep -Seconds 1
+}
+
+if (-not ($apiReady -and $webReady)) {
+    Write-Host "The GovernedMemory services did not become ready within 60 seconds."
+    docker compose -f deploy/docker-compose.yml ps
+    exit 1
+}
+
+Write-Host @"
+
+GovernedMemory is ready.
+
+Web console: http://localhost:3000
+API health:  http://localhost:8000/healthz
+
+Next steps:
+1. Open the web console.
+2. Go to Write.
+3. Submit the example injection text from the README.
+4. Open Audit Log to inspect the blocked event.
+"@
