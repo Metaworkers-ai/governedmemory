@@ -3,6 +3,12 @@
 $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")
 
+if (-not $env:COMPOSE_PROJECT_NAME) {
+    $projectName = (Split-Path -Leaf (Get-Location)).ToLower() -replace "[^a-z0-9_-]", "-"
+    if (-not $projectName) { $projectName = "governedmemory" }
+    $env:COMPOSE_PROJECT_NAME = $projectName
+}
+
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     Write-Error @"
 Docker is required for the local Quickstart but was not found.

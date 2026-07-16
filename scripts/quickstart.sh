@@ -8,6 +8,12 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+if [ -z "${COMPOSE_PROJECT_NAME:-}" ]; then
+  COMPOSE_PROJECT_NAME="$(basename "$ROOT_DIR" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9_-]/-/g; s/^[^a-z0-9]+//')"
+  [ -n "$COMPOSE_PROJECT_NAME" ] || COMPOSE_PROJECT_NAME="governedmemory"
+  export COMPOSE_PROJECT_NAME
+fi
+
 if ! command -v docker >/dev/null 2>&1; then
   cat >&2 <<'EOF'
 Docker is required for the local Quickstart but was not found.

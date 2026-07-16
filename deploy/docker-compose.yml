@@ -21,6 +21,8 @@
 # TENANT_ID, so the --profile seed job's data shows up in the console with
 # zero extra config -- keep these in sync if either one changes.
 
+name: governedmemory
+
 services:
   postgres:
     image: pgvector/pgvector:pg16          # official image with pgvector pre-installed
