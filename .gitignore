@@ -13,4 +13,5 @@ build/
 .coverage
 htmlcov/
 *.pth
+.cache/discord-daily-article.json
 .claude/settings.local.json

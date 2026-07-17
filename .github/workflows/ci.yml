@@ -26,9 +26,9 @@ jobs:
           pip install -e .
           pip install -e sdk/python
       - name: ruff check
-        run: ruff check core/ api/ tests/ sdk/python/
+        run: ruff check core/ api/ tests/ sdk/python/ scripts/discord_daily_article.py
       - name: ruff format --check
-        run: ruff format --check core/ api/ tests/ sdk/python/
+        run: ruff format --check core/ api/ tests/ sdk/python/ scripts/discord_daily_article.py
 
   test-unit:
     name: Unit tests

@@ -1,0 +1,58 @@
+name: Discord daily article
+
+on:
+  schedule:
+    # 09:00 Asia/Kolkata (IST) every day.
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Select an article without posting it
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: discord-daily-article
+  cancel-in-progress: false
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Restore posted-article history
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/discord-daily-article.json
+          key: discord-daily-article-${{ github.run_id }}
+          restore-keys: |
+            discord-daily-article-
+
+      - name: Find and post one article
+        env:
+          DISCORD_DAILY_ARTICLE_WEBHOOK_URL: ${{ secrets.DISCORD_DAILY_ARTICLE_WEBHOOK_URL }}
+          DISCORD_ARTICLE_FEEDS: ${{ vars.DISCORD_ARTICLE_FEEDS }}
+          DISCORD_ARTICLE_WEBHOOK_NAME: ${{ vars.DISCORD_ARTICLE_WEBHOOK_NAME }}
+        run: |
+          args=()
+          if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+            args+=(--dry-run)
+          fi
+          python3 scripts/discord_daily_article.py "${args[@]}"
+
+      - name: Save posted-article history
+        if: ${{ success() && inputs.dry_run != true }}
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/discord-daily-article.json
+          key: discord-daily-article-${{ github.run_id }}
