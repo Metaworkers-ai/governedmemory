@@ -770,6 +770,58 @@
   .feature:hover h3 .regicon { transform: rotate(90deg); }
   .feature p { margin: 0; color: var(--ink-soft); font-size: 0.9rem; line-height: 1.55; }
 
+  /* ---------- use cases ---------- */
+  .use-case { display: flex; flex-direction: column; text-decoration: none; color: inherit; }
+  .use-case .use-tag {
+    font-family: var(--font-data);
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 0.8rem;
+  }
+  .use-case h3 {
+    display: block;
+    font-size: 1rem;
+    letter-spacing: 0;
+    line-height: 1.28;
+    margin-bottom: 0.6rem;
+    color: var(--ink);
+  }
+  .use-case p { flex: 1; }
+  .use-more {
+    margin-top: 1.15rem;
+    font-family: var(--font-data);
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+    color: var(--accent);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .use-more .arr { transition: transform 0.3s cubic-bezier(.2,.8,.3,1); }
+  .use-case:hover .use-more .arr { transform: translateX(5px); }
+
+  /* highlight band framing the use-cases section */
+  .uc-band {
+    position: relative;
+    margin: 1.6rem 0;
+    padding: 3.4rem 0;
+    background: color-mix(in srgb, var(--accent-soft) 30%, var(--bg-raised));
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+  .uc-band::before {
+    content: "";
+    position: absolute;
+    top: -1px; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    opacity: 0.75;
+  }
+  #use-cases .section-num { color: var(--accent); }
+
   /* ---------- status ---------- */
   .status-list { border-top: 1px solid var(--border); }
   .status-row {
@@ -946,6 +998,7 @@
     </a>
     <div class="nav-links">
       <a href="#how-it-works">How it works</a>
+      <a href="#use-cases">Use cases</a>
       <a href="#whats-live">What's live</a>
       <a href="#get-started">Get started</a>
       <a class="gh" href="https://github.com/Metaworkers-ai/governedmemory">GitHub ↗</a>
@@ -1123,7 +1176,55 @@
     </section>
   </div>
 
-  <div class="wrap"><div class="divider" aria-hidden="true"><span class="line"></span><svg class="regicon" width="13" height="13" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1"/><path d="M7 1V13M1 7H13" stroke="currentColor" stroke-width="1"/></svg><span class="line"></span></div></div>
+  <div class="uc-band">
+  <div class="wrap">
+    <section id="use-cases" data-reveal>
+      <div class="section-head prose">
+        <span class="section-num">Use cases</span>
+        <h2>Built for the moment memory turns into action</h2>
+        <p>Every card below is the same underlying problem — an agent about to act on a memory it shouldn't trust. Each links to a full walkthrough: what's attempted, what gets blocked, and the audit trail it leaves behind.</p>
+      </div>
+      <div class="grid">
+        <a class="feature use-case" href="use-cases/poisoned-memory.html">
+          <span class="use-tag">Flagship</span>
+          <h3>Stop agents acting on poisoned memory</h3>
+          <p>An agent that can issue refunds, send email, or escalate an account is one injected instruction away from doing it for an attacker. The privilege gate blocks the action itself — not just the text that asked for it.</p>
+          <span class="use-more">Read the full scenario <span class="arr">&rarr;</span></span>
+        </a>
+        <a class="feature use-case" href="use-cases/prompt-injection.html">
+          <span class="use-tag">Injection</span>
+          <h3>Prompt injection, caught on write</h3>
+          <p>Inbound email, scraped pages, and tool output routinely carry "ignore previous instructions." It's scored and tainted the moment it's stored — long before it can reach a prompt.</p>
+          <span class="use-more">Read the full scenario <span class="arr">&rarr;</span></span>
+        </a>
+        <a class="feature use-case" href="use-cases/tenant-isolation.html">
+          <span class="use-tag">Isolation</span>
+          <h3>Cross-tenant data leaks</h3>
+          <p>On a multi-tenant agent platform, a single cross-tenant read is a company-ending incident, not a bug ticket. The boundary is enforced at the storage layer, not left to application discipline.</p>
+          <span class="use-more">Read the full scenario <span class="arr">&rarr;</span></span>
+        </a>
+        <a class="feature use-case" href="use-cases/purpose-limited.html">
+          <span class="use-tag">Compliance</span>
+          <h3>Need-to-know retrieval</h3>
+          <p>A memory collected for support shouldn't quietly become the basis for a sales or marketing decision. Purpose limits are enforced at query time, with a record of what was withheld and why.</p>
+          <span class="use-more">Read the full scenario <span class="arr">&rarr;</span></span>
+        </a>
+        <a class="feature use-case" href="use-cases/audit-trail.html">
+          <span class="use-tag">Audit</span>
+          <h3>"What did the agent know?"</h3>
+          <p>The first question in every AI incident review. A hash-chained, append-only log answers it — without trusting application logs that could have been edited after the fact.</p>
+          <span class="use-more">Read the full scenario <span class="arr">&rarr;</span></span>
+        </a>
+        <a class="feature use-case" href="use-cases/index.html">
+          <span class="use-tag">By sector</span>
+          <h3>Industry deep-dives</h3>
+          <p>The same mechanisms worked through for insurance claims, financial-services payments (BEC), AI recruiting, and legal citation review — each grounded in a documented real-world incident.</p>
+          <span class="use-more">See all ten <span class="arr">&rarr;</span></span>
+        </a>
+      </div>
+    </section>
+  </div>
+  </div>
 
   <div class="wrap">
     <section id="whats-live" data-reveal>
