@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Make cross-tenant leaks structurally impossible — Governed Memory</title>
+<meta name="description" content="On a multi-tenant agent platform, a single cross-tenant read is a company-ending incident. Governed Memory enforces the tenant boundary at the storage layer, not in application code.">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Ccircle cx='7' cy='7' r='4.5' fill='none' stroke='%2352C6DE' stroke-width='1.5'/%3E%3Cpath d='M7 1V13M1 7H13' stroke='%2352C6DE' stroke-width='1.5'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="uc.css">
+</head>
+<body>
+<div class="grain" aria-hidden="true"></div>
+<aside class="rail" aria-hidden="true">
+  <svg class="rail-mark" width="12" height="12" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.3"/><path d="M7 1V13M1 7H13" stroke="currentColor" stroke-width="1.3"/></svg>
+  <span class="rail-label">Use case · Isolation</span>
+</aside>
+
+<nav class="nav">
+  <div class="nav-row">
+    <a class="wordmark" href="../index.html">
+      <svg class="regicon" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.3"/><path d="M7 1V13M1 7H13" stroke="currentColor" stroke-width="1.3"/></svg>
+      GOVERNED MEMORY
+    </a>
+    <div class="nav-links">
+      <a class="here" href="index.html">All use cases</a>
+      <a href="../index.html#how-it-works">How it works</a>
+      <a href="../index.html#get-started">Get started</a>
+      <a class="gh" href="https://github.com/Metaworkers-ai/governedmemory">GitHub &#8599;</a>
+    </div>
+  </div>
+</nav>
+
+<main class="wrap uc-main" id="top">
+  <a class="uc-back" href="index.html"><span aria-hidden="true">&larr;</span> All use cases</a>
+
+  <header class="uc-hero">
+    <span class="eyebrow">
+      <svg class="regicon" width="10" height="10" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.6"/><path d="M7 1V13M1 7H13" stroke="currentColor" stroke-width="1.6"/></svg>
+      Multi-tenant isolation
+    </span>
+    <h1>Make cross-tenant leaks structurally impossible</h1>
+    <p class="dek">On a multi-tenant agent platform, a single cross-tenant read is a company-ending incident, not a bug ticket. Governed Memory enforces the boundary at the storage layer &mdash; not in application code that one refactor can quietly break.</p>
+  </header>
+
+  <figure class="uc-figure">
+    <div class="uc-figscroll">
+      <div class="uc-flow" style="--stop:68%">
+        <div class="uc-line"></div>
+        <div class="uc-nodes">
+          <div class="uc-node n1"><span class="dot"></span><span class="k">Tenant A query</span><span class="d">agent request</span></div>
+          <div class="uc-node n2"><span class="dot"></span><span class="k">Scope filter</span><span class="d">tenant = A</span></div>
+          <div class="uc-node n3 gate"><span class="dot"></span><span class="k">Isolation boundary</span><span class="d">row ownership</span></div>
+          <div class="uc-node n4"><span class="dot"></span><span class="k">Results</span><span class="d">tenant A only</span></div>
+        </div>
+        <span class="uc-packet trust" aria-hidden="true"></span>
+        <span class="uc-packet reject" aria-hidden="true"></span>
+        <span class="uc-x" aria-hidden="true">&#10007;</span>
+        <div class="uc-ledger" aria-hidden="true">
+          <span class="uc-ll l1">09:14:22 &middot; read &middot; tenant:acme &middot; purpose:support &middot; <span class="ok">3 records</span></span>
+          <span class="uc-ll l2">09:14:22 &middot; read &middot; tenant:acme &middot; row owned by globex &middot; <span class="bad">FILTERED</span></span>
+          <span class="uc-ll l3">09:14:22 &middot; gate &middot; tenant boundary &middot; <span class="bad">0 cross-tenant rows</span></span>
+        </div>
+      </div>
+    </div>
+    <figcaption>A query scoped to one tenant can't return another tenant's rows. The boundary lives in the query itself, so an application bug &mdash; a missing filter, a cache-key collision &mdash; can't leak data across it.</figcaption>
+  </figure>
+
+  <section class="uc-section">
+    <h2>The risk</h2>
+    <p>If you're building an agent product that serves more than one customer, a single cross-tenant read isn't a bug you patch on Monday &mdash; it's the kind of incident that ends the company. One customer seeing another's data is unrecoverable trust damage in a regulated buyer's eyes.</p>
+    <p>Most systems enforce isolation in application code, where a single missing <code>WHERE</code> clause, a cache-key collision, or a copy-pasted query is all it takes. That's a lot of surface area to keep perfect forever.</p>
+  </section>
+
+  <section class="uc-section">
+    <h2>How Governed Memory handles it</h2>
+    <ol class="uc-points">
+      <li class="uc-point"><span class="n">01</span><div><b>Isolation at the storage layer</b><p>Every read and write is scoped to a tenant at the query level &mdash; not by an application-code convention a future refactor can silently drop.</p></div></li>
+      <li class="uc-point"><span class="n">02</span><div><b>Cross-tenant reads return nothing</b><p>Not an error that leaks existence, not a partial result. A request for another tenant's data comes back empty.</p></div></li>
+      <li class="uc-point"><span class="n">03</span><div><b>No shared trust between tenants</b><p>One tenant's trusted content is never visible to another tenant's agents, sessions, or retrievals.</p></div></li>
+      <li class="uc-point"><span class="n">04</span><div><b>Provable, not just asserted</b><p>Every access is logged per tenant, so you can demonstrate isolation held for a given query &mdash; the answer a security review actually wants.</p></div></li>
+    </ol>
+  </section>
+
+  <div class="cta-row">
+    <a class="cta cta--primary" href="https://github.com/Metaworkers-ai/governedmemory/blob/main/docs/use-cases/03-multi-tenant-isolation.md">Read the full technical walkthrough &rarr;</a>
+    <a class="cta cta--secondary" href="../index.html#get-started">Self-host it</a>
+  </div>
+
+  <nav class="uc-related">
+    <h3>Related use cases</h3>
+    <div class="uc-grid">
+      <a class="uc-card" href="purpose-limited.html">
+        <span class="use-tag">Compliance</span>
+        <b>Need-to-know retrieval</b>
+        <p>Beyond tenant boundaries, limit which memory is eligible for a given purpose within a tenant.</p>
+        <span class="use-more">Read <span class="arr">&rarr;</span></span>
+      </a>
+      <a class="uc-card" href="poisoned-memory.html">
+        <span class="use-tag">Flagship</span>
+        <b>Stop agents acting on poisoned memory</b>
+        <p>Isolation keeps data separate; the privilege gate keeps a poisoned memory from triggering an action.</p>
+        <span class="use-more">Read <span class="arr">&rarr;</span></span>
+      </a>
+      <a class="uc-card" href="audit-trail.html">
+        <span class="use-tag">Audit</span>
+        <b>"What did the agent know?"</b>
+        <p>Per-tenant, hash-chained logs make isolation demonstrable after the fact.</p>
+        <span class="use-more">Read <span class="arr">&rarr;</span></span>
+      </a>
+    </div>
+  </nav>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-row">
+      <div>
+        <a class="wordmark" href="../index.html">
+          <svg class="regicon" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.3"/><path d="M7 1V13M1 7H13" stroke="currentColor" stroke-width="1.3"/></svg>
+          GOVERNED MEMORY
+        </a>
+        <p>MIT licensed, self-hosted today. Enterprise hosting is coming &mdash; until then, run it yourself.</p>
+      </div>
+      <div class="foot-col">
+        <h4>Project</h4>
+        <div class="foot-links">
+          <a href="https://github.com/Metaworkers-ai/governedmemory">GitHub</a>
+          <a href="index.html">Use cases</a>
+          <a href="../index.html#get-started">Get started</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

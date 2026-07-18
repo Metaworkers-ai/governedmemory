@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Answer "what did the agent know?" — provably — Governed Memory</title>
+<meta name="description" content="The first question in every AI incident review. A hash-chained, append-only log answers it without trusting application logs that could have been edited after the fact.">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Ccircle cx='7' cy='7' r='4.5' fill='none' stroke='%2352C6DE' stroke-width='1.5'/%3E%3Cpath d='M7 1V13M1 7H13' stroke='%2352C6DE' stroke-width='1.5'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="uc.css">
+</head>
+<body>
+<div class="grain" aria-hidden="true"></div>
+<aside class="rail" aria-hidden="true">
+  <svg class="rail-mark" width="12" height="12" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.3"/><path d="M7 1V13M1 7H13" stroke="currentColor" stroke-width="1.3"/></svg>
+  <span class="rail-label">Use case · Audit</span>
+</aside>
+
+<nav class="nav">
+  <div class="nav-row">
+    <a class="wordmark" href="../index.html">
+      <svg class="regicon" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.3"/><path d="M7 1V13M1 7H13" stroke="currentColor" stroke-width="1.3"/></svg>
+      GOVERNED MEMORY
+    </a>
+    <div class="nav-links">
+      <a class="here" href="index.html">All use cases</a>
+      <a href="../index.html#how-it-works">How it works</a>
+      <a href="../index.html#get-started">Get started</a>
+      <a class="gh" href="https://github.com/Metaworkers-ai/governedmemory">GitHub &#8599;</a>
+    </div>
+  </div>
+</nav>
+
+<main class="wrap uc-main" id="top">
+  <a class="uc-back" href="index.html"><span aria-hidden="true">&larr;</span> All use cases</a>
+
+  <header class="uc-hero">
+    <span class="eyebrow">
+      <svg class="regicon" width="10" height="10" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.6"/><path d="M7 1V13M1 7H13" stroke="currentColor" stroke-width="1.6"/></svg>
+      Tamper-evident audit trail
+    </span>
+    <h1>Answer "what did the agent know?" &mdash; provably</h1>
+    <p class="dek">It's the first question in every AI incident review and every enterprise security questionnaire. A hash-chained, append-only log answers it &mdash; without trusting application logs that could have been edited after the fact.</p>
+  </header>
+
+  <figure class="uc-figure">
+    <div class="uc-figscroll">
+      <div class="uc-flow" style="--stop:68%">
+        <div class="uc-line"></div>
+        <div class="uc-nodes">
+          <div class="uc-node n1"><span class="dot"></span><span class="k">Every event</span><span class="d">write &middot; read &middot; block</span></div>
+          <div class="uc-node n2"><span class="dot"></span><span class="k">Hash + link</span><span class="d">chain to prior</span></div>
+          <div class="uc-node n3 gate"><span class="dot"></span><span class="k">Verify</span><span class="d">recompute chain</span></div>
+          <div class="uc-node n4"><span class="dot"></span><span class="k">Replay</span><span class="d">what it knew</span></div>
+        </div>
+        <span class="uc-packet trust" aria-hidden="true"></span>
+        <span class="uc-packet reject" aria-hidden="true"></span>
+        <span class="uc-x" aria-hidden="true">&#10007;</span>
+        <div class="uc-ledger" aria-hidden="true">
+          <span class="uc-ll l1">#8410 &middot; write &middot; user/ticket &middot; hash a1f9c&hellip; &middot; <span class="ok">LINKED</span></span>
+          <span class="uc-ll l2">#8411 &middot; gate &middot; refund blocked &middot; hash 4c27b&hellip; &middot; <span class="ok">LINKED</span></span>
+          <span class="uc-ll l3">verify &middot; 8,412 events &middot; <span class="ok">CHAIN INTACT</span> &middot; tamper &rarr; <span class="bad">DETECTED</span></span>
+        </div>
+      </div>
+    </div>
+    <figcaption>Every decision &mdash; including the ones that blocked an action &mdash; is written as a hash-chained event. Re-computing the chain from stored fields reveals any entry that was edited after the fact.</figcaption>
+  </figure>
+
+  <section class="uc-section">
+    <h2>The risk</h2>
+    <p><em>"What did the agent know when it did that?"</em> is the first question in every AI incident review, every regulator inquiry, and every enterprise security questionnaire. If the answer lives in application logs that could have been edited after the fact, it isn't an answer a regulator or a customer will accept.</p>
+    <p>You need a record that's convincing precisely because it can't have been quietly rewritten to match the story you'd prefer to tell.</p>
+  </section>
+
+  <section class="uc-section">
+    <h2>How Governed Memory handles it</h2>
+    <ol class="uc-points">
+      <li class="uc-point"><span class="n">01</span><div><b>Every decision is an event</b><p>Writes, reads, quarantines, policy checks, and blocked actions are all recorded &mdash; not just the happy path an application chose to log.</p></div></li>
+      <li class="uc-point"><span class="n">02</span><div><b>Hash-chained and append-only</b><p>Each entry carries a SHA-256 hash over its own contents and the entry before it. There's no in-place edit that leaves the chain consistent.</p></div></li>
+      <li class="uc-point"><span class="n">03</span><div><b>Tampering is detectable</b><p>Verification re-computes the chain from stored fields, so it catches an entry that was altered after it was written &mdash; not only one that was deleted.</p></div></li>
+      <li class="uc-point"><span class="n">04</span><div><b>Replayable months later</b><p>You can reconstruct exactly what the agent saw and why it acted, long after the fact, without trusting the application that produced the events.</p></div></li>
+    </ol>
+  </section>
+
+  <div class="cta-row">
+    <a class="cta cta--primary" href="https://github.com/Metaworkers-ai/governedmemory/blob/main/docs/use-cases/05-tamper-evident-audit-trail.md">Read the full technical walkthrough &rarr;</a>
+    <a class="cta cta--secondary" href="../index.html#get-started">Self-host it</a>
+  </div>
+
+  <nav class="uc-related">
+    <h3>Related use cases</h3>
+    <div class="uc-grid">
+      <a class="uc-card" href="poisoned-memory.html">
+        <span class="use-tag">Flagship</span>
+        <b>Stop agents acting on poisoned memory</b>
+        <p>The audit trail is what lets you replay a blocked action and show exactly why it was stopped.</p>
+        <span class="use-more">Read <span class="arr">&rarr;</span></span>
+      </a>
+      <a class="uc-card" href="tenant-isolation.html">
+        <span class="use-tag">Isolation</span>
+        <b>Cross-tenant data leaks</b>
+        <p>Per-tenant logs make isolation demonstrable, not just asserted, when a review asks.</p>
+        <span class="use-more">Read <span class="arr">&rarr;</span></span>
+      </a>
+      <a class="uc-card" href="purpose-limited.html">
+        <span class="use-tag">Compliance</span>
+        <b>Need-to-know retrieval</b>
+        <p>Every purpose-based exclusion is a logged event you can produce for a compliance reviewer.</p>
+        <span class="use-more">Read <span class="arr">&rarr;</span></span>
+      </a>
+    </div>
+  </nav>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-row">
+      <div>
+        <a class="wordmark" href="../index.html">
+          <svg class="regicon" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.3"/><path d="M7 1V13M1 7H13" stroke="currentColor" stroke-width="1.3"/></svg>
+          GOVERNED MEMORY
+        </a>
+        <p>MIT licensed, self-hosted today. Enterprise hosting is coming &mdash; until then, run it yourself.</p>
+      </div>
+      <div class="foot-col">
+        <h4>Project</h4>
+        <div class="foot-links">
+          <a href="https://github.com/Metaworkers-ai/governedmemory">GitHub</a>
+          <a href="index.html">Use cases</a>
+          <a href="../index.html#get-started">Get started</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</footer>
+</body>
+</html>
