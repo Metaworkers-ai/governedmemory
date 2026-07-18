@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Use cases — Governed Memory</title>
+<meta name="description" content="Where a wrong memory becomes a wrong action: refund fraud, prompt injection, cross-tenant leaks, purpose-limited retrieval, tamper-evident audit, and industry deep-dives.">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Ccircle cx='7' cy='7' r='4.5' fill='none' stroke='%2352C6DE' stroke-width='1.5'/%3E%3Cpath d='M7 1V13M1 7H13' stroke='%2352C6DE' stroke-width='1.5'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="uc.css">
+</head>
+<body>
+<div class="grain" aria-hidden="true"></div>
+<aside class="rail" aria-hidden="true">
+  <svg class="rail-mark" width="12" height="12" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.3"/><path d="M7 1V13M1 7H13" stroke="currentColor" stroke-width="1.3"/></svg>
+  <span class="rail-label">Use cases</span>
+</aside>
+
+<nav class="nav">
+  <div class="nav-row">
+    <a class="wordmark" href="../index.html">
+      <svg class="regicon" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.3"/><path d="M7 1V13M1 7H13" stroke="currentColor" stroke-width="1.3"/></svg>
+      GOVERNED MEMORY
+    </a>
+    <div class="nav-links">
+      <a class="here" href="index.html">All use cases</a>
+      <a href="../index.html#how-it-works">How it works</a>
+      <a href="../index.html#get-started">Get started</a>
+      <a class="gh" href="https://github.com/Metaworkers-ai/governedmemory">GitHub &#8599;</a>
+    </div>
+  </div>
+</nav>
+
+<main class="wrap uc-main" id="top">
+  <a class="uc-back" href="../index.html"><span aria-hidden="true">&larr;</span> Back to home</a>
+
+  <header class="uc-hero">
+    <span class="eyebrow">
+      <svg class="regicon" width="10" height="10" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.6"/><path d="M7 1V13M1 7H13" stroke="currentColor" stroke-width="1.6"/></svg>
+      Use cases
+    </span>
+    <h1>One engine, aimed at the moments that matter</h1>
+    <p class="dek">Every scenario below is the same underlying problem &mdash; an agent about to act on a memory it shouldn't trust. The core five have a full visual walkthrough; the industry deep-dives are grounded in documented real-world incidents.</p>
+  </header>
+
+  <section class="uc-related" style="border-top:none;margin-top:2.6rem;padding-top:0;">
+    <h3>Core scenarios</h3>
+    <div class="uc-grid">
+      <a class="uc-card" href="poisoned-memory.html">
+        <span class="use-tag">Flagship</span>
+        <b>Stop agents acting on poisoned memory</b>
+        <p>An agent that can issue refunds or escalate an account is one injected instruction away from doing it for an attacker.</p>
+        <span class="use-more">Read <span class="arr">&rarr;</span></span>
+      </a>
+      <a class="uc-card" href="prompt-injection.html">
+        <span class="use-tag">Injection</span>
+        <b>Prompt injection, caught on write</b>
+        <p>Untrusted email, scraped pages, and tool output are scored and tainted the moment they're stored.</p>
+        <span class="use-more">Read <span class="arr">&rarr;</span></span>
+      </a>
+      <a class="uc-card" href="tenant-isolation.html">
+        <span class="use-tag">Isolation</span>
+        <b>Cross-tenant data leaks</b>
+        <p>On a multi-tenant platform a single cross-tenant read is company-ending. The boundary lives in the query itself.</p>
+        <span class="use-more">Read <span class="arr">&rarr;</span></span>
+      </a>
+      <a class="uc-card" href="purpose-limited.html">
+        <span class="use-tag">Compliance</span>
+        <b>Need-to-know retrieval</b>
+        <p>A memory collected for support shouldn't drive a marketing decision. Purpose is enforced at query time.</p>
+        <span class="use-more">Read <span class="arr">&rarr;</span></span>
+      </a>
+      <a class="uc-card" href="audit-trail.html">
+        <span class="use-tag">Audit</span>
+        <b>"What did the agent know?"</b>
+        <p>A hash-chained, append-only log answers the first question in every incident review &mdash; provably.</p>
+        <span class="use-more">Read <span class="arr">&rarr;</span></span>
+      </a>
+      <a class="uc-card" href="https://github.com/Metaworkers-ai/governedmemory/blob/main/docs/use-cases/06-memory-deduplication-hygiene.md" target="_blank" rel="noopener">
+        <span class="use-tag">Hygiene</span>
+        <b>Memory dedup &amp; supersede</b>
+        <p>Stop agents re-writing the same fact every session &mdash; and stop a stale fact from answering after it's corrected.</p>
+        <span class="use-more ext">Technical walkthrough <span class="arr">&#8599;</span></span>
+      </a>
+    </div>
+  </section>
+
+  <section class="uc-related">
+    <h3>Industry deep-dives</h3>
+    <div class="uc-grid">
+      <a class="uc-card" href="https://github.com/Metaworkers-ai/governedmemory/blob/main/docs/use-cases/07-insurance-claims-and-underwriting.md" target="_blank" rel="noopener">
+        <span class="use-tag">Insurance</span>
+        <b>Claims &amp; underwriting agents</b>
+        <p>Block payout approval on fabricated or injected claim documents; keep underwriting signals out of claims decisions.</p>
+        <span class="use-more ext">Technical walkthrough <span class="arr">&#8599;</span></span>
+      </a>
+      <a class="uc-card" href="https://github.com/Metaworkers-ai/governedmemory/blob/main/docs/use-cases/08-financial-services-payments-and-lending.md" target="_blank" rel="noopener">
+        <span class="use-tag">Financial services</span>
+        <b>Payments, lending &amp; advisory</b>
+        <p>Stop a payments agent wiring funds on a fraudulent "updated remittance details" email &mdash; the classic BEC attack.</p>
+        <span class="use-more ext">Technical walkthrough <span class="arr">&#8599;</span></span>
+      </a>
+      <a class="uc-card" href="https://github.com/Metaworkers-ai/governedmemory/blob/main/docs/use-cases/09-recruiting-and-talent-acquisition.md" target="_blank" rel="noopener">
+        <span class="use-tag">Recruiting</span>
+        <b>Talent-acquisition agents</b>
+        <p>Hidden injection text in a scraped profile hijacking an AI recruiting workflow &mdash; grounded in a real incident.</p>
+        <span class="use-more ext">Technical walkthrough <span class="arr">&#8599;</span></span>
+      </a>
+      <a class="uc-card" href="https://github.com/Metaworkers-ai/governedmemory/blob/main/docs/use-cases/10-legal-and-contract-review.md" target="_blank" rel="noopener">
+        <span class="use-tag">Legal</span>
+        <b>Research &amp; contract review</b>
+        <p>Grounded in <em>Mata v. Avianca</em>: keep fabricated citations from reaching a filing as if they were verified authority.</p>
+        <span class="use-more ext">Technical walkthrough <span class="arr">&#8599;</span></span>
+      </a>
+    </div>
+  </section>
+
+  <div class="cta-row">
+    <a class="cta cta--primary" href="../index.html#get-started">Self-host it</a>
+    <a class="cta cta--secondary" href="https://github.com/Metaworkers-ai/governedmemory/blob/main/docs/use-cases/README.md">All use cases on GitHub &rarr;</a>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-row">
+      <div>
+        <a class="wordmark" href="../index.html">
+          <svg class="regicon" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.3"/><path d="M7 1V13M1 7H13" stroke="currentColor" stroke-width="1.3"/></svg>
+          GOVERNED MEMORY
+        </a>
+        <p>MIT licensed, self-hosted today. Enterprise hosting is coming &mdash; until then, run it yourself.</p>
+      </div>
+      <div class="foot-col">
+        <h4>Project</h4>
+        <div class="foot-links">
+          <a href="https://github.com/Metaworkers-ai/governedmemory">GitHub</a>
+          <a href="../index.html#how-it-works">How it works</a>
+          <a href="../index.html#get-started">Get started</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</footer>
+</body>
+</html>
