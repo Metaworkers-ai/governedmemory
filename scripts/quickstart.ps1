@@ -11,7 +11,14 @@ Set-Location (Join-Path $PSScriptRoot "..")
 $composeFile = "deploy/docker-compose.yml"
 function Invoke-Compose {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
-    docker compose -f $composeFile @Arguments
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "SilentlyContinue"
+        docker compose -f $composeFile @Arguments 2>$null
+        $script:LastComposeExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
 }
 
 if (-not $env:COMPOSE_PROJECT_NAME) {
@@ -30,8 +37,14 @@ Prefer zero-install? Use the hosted sandbox from the project README.
 }
 
 function Test-DockerRunning {
-    docker info *> $null
-    return $LASTEXITCODE -eq 0
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "SilentlyContinue"
+        docker info 2>&1 | Out-Null
+        return $LASTEXITCODE -eq 0
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
 }
 
 if (-not (Test-DockerRunning)) {
@@ -65,14 +78,14 @@ Start Docker Desktop manually, wait for it to finish loading, and rerun:
 if ($Action -eq "down") {
     Write-Host "Stopping Compose project '$env:COMPOSE_PROJECT_NAME' (volumes preserved)..."
     Invoke-Compose -Arguments @("down")
-    exit $LASTEXITCODE
+    exit $script:LastComposeExitCode
 }
 
 if ($Action -eq "reset") {
     Write-Host "WARNING: resetting Compose project '$env:COMPOSE_PROJECT_NAME' will delete its demo data and volumes."
     Write-Host "Removing containers, networks, and volumes..."
     Invoke-Compose -Arguments @("down", "-v")
-    exit $LASTEXITCODE
+    exit $script:LastComposeExitCode
 }
 
 function Test-HostPortBusy {
@@ -82,9 +95,18 @@ function Test-HostPortBusy {
 
 function Get-ExistingMappedPort {
     param([string]$Service, [int]$ContainerPort)
-    $container = Invoke-Compose -Arguments @("ps", "-aq", $Service) 2>$null | Select-Object -First 1
+    $container = Invoke-Compose -Arguments @("ps", "-aq", $Service) | Select-Object -First 1
+    if ($script:LastComposeExitCode -ne 0) { return $null }
     if (-not $container) { return $null }
-    $raw = docker inspect -f '{{json .HostConfig.PortBindings}}' $container 2>$null
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "SilentlyContinue"
+        $raw = docker inspect -f '{{json .HostConfig.PortBindings}}' $container 2>$null
+        $inspectExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if ($inspectExitCode -ne 0) { return $null }
     if (-not $raw) { return $null }
     try {
         $bindings = $raw | ConvertFrom-Json
@@ -104,6 +126,20 @@ function Resolve-HostPort {
         if (-not (Test-HostPortBusy $candidate)) { return $candidate }
     }
     throw "Host ports $DefaultPort-$MaxPort are all busy; stop one or set $EnvironmentName manually."
+}
+
+function Get-ContainerState {
+    param([string]$Container)
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "SilentlyContinue"
+        $state = docker inspect -f '{{.State.Status}} {{.State.ExitCode}}' $Container 2>$null
+        $script:LastInspectExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if ($script:LastInspectExitCode -ne 0) { return $null }
+    return $state
 }
 
 $postgresPortSupplied = $env:POSTGRES_HOST_PORT
@@ -140,17 +176,17 @@ function Write-Diagnostics {
 
 Write-Host "Docker is ready. Starting GovernedMemory..."
 Invoke-Compose -Arguments @("--profile", "seed", "up", "--build", "-d")
-if ($LASTEXITCODE -ne 0) {
+if ($script:LastComposeExitCode -ne 0) {
     Write-Diagnostics "startup"
-    exit $LASTEXITCODE
+    exit $script:LastComposeExitCode
 }
 
 Write-Host "Waiting for the demo seed and application health..."
 $seedContainer = ""
 for ($i = 0; $i -lt 60; $i++) {
-    $seedContainer = (Invoke-Compose -Arguments @("ps", "-aq", "seed") 2>$null | Select-Object -First 1)
+    $seedContainer = (Invoke-Compose -Arguments @("ps", "-aq", "seed") | Select-Object -First 1)
     if ($seedContainer) {
-        $seedState = docker inspect -f '{{.State.Status}} {{.State.ExitCode}}' $seedContainer 2>$null
+        $seedState = Get-ContainerState $seedContainer
         if ($seedState -eq "exited 0") { break }
         if ($seedState -like "exited *") {
             Write-Host "The demo seed failed ($seedState)."
@@ -161,7 +197,7 @@ for ($i = 0; $i -lt 60; $i++) {
     Start-Sleep -Seconds 1
 }
 
-if (-not $seedContainer -or (docker inspect -f '{{.State.Status}} {{.State.ExitCode}}' $seedContainer 2>$null) -ne "exited 0") {
+if (-not $seedContainer -or (Get-ContainerState $seedContainer) -ne "exited 0") {
     Write-Host "The demo seed did not finish within 60 seconds."
     Write-Diagnostics "seed"
     exit 1
