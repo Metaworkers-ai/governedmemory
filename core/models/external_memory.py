@@ -22,6 +22,7 @@ class ExternalCandidateDecision(BaseModel):
         "untrusted",
         "quarantined",
         "purpose_restricted",
+        "scope_restricted",
         "missing_id",
     ]
     decision: Literal["allow", "exclude"]
@@ -49,5 +50,5 @@ class ExternalMemoryGovernance(BaseModel):
     quarantine_status: bool
     policy_id: str
     lifecycle_state: str
-    content_fingerprint: str | None = None
     binding_audit_id: str | None = None
+    quarantine_audit_id: str | None = None

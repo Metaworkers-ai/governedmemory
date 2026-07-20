@@ -34,6 +34,14 @@ from core.audit import (
     plan_cascade_purge,
     verify_chain,
 )
+from core.errors import (
+    ExternalBindingConflict,
+    ExternalGovernanceError,
+    ExternalOperationFailed,
+    ExternalOperationNotFound,
+    FingerprintConfigurationError,
+    IdempotencyConflict,
+)
 from core.governance import (
     GovernanceDecision,
     GovernanceEvaluationRequest,
@@ -165,6 +173,9 @@ CREATE TABLE IF NOT EXISTS external_governance_operations (
     )),
     evaluation_audit_id UUID,
     failure_reason      TEXT,
+    retry_count         INTEGER NOT NULL DEFAULT 0,
+    max_attempts        INTEGER NOT NULL DEFAULT 3,
+    last_failure_at     TIMESTAMPTZ,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (tenant_id, external_system, operation_type, idempotency_key),
@@ -193,6 +204,7 @@ CREATE TABLE IF NOT EXISTS external_memory_bindings (
     )),
     content_fingerprint TEXT,
     binding_audit_id    UUID,
+    quarantine_audit_id UUID,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (tenant_id, external_system, external_memory_id)
@@ -255,6 +267,21 @@ def init_db(dsn: str) -> None:
         cur.execute(
             "ALTER TABLE external_governance_operations "
             "ADD COLUMN IF NOT EXISTS external_memory_ids JSONB NOT NULL DEFAULT '[]'"
+        )
+        cur.execute(
+            "ALTER TABLE external_governance_operations "
+            "ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0"
+        )
+        cur.execute(
+            "ALTER TABLE external_governance_operations "
+            "ADD COLUMN IF NOT EXISTS max_attempts INTEGER NOT NULL DEFAULT 3"
+        )
+        cur.execute(
+            "ALTER TABLE external_governance_operations "
+            "ADD COLUMN IF NOT EXISTS last_failure_at TIMESTAMPTZ"
+        )
+        cur.execute(
+            "ALTER TABLE external_memory_bindings ADD COLUMN IF NOT EXISTS quarantine_audit_id UUID"
         )
         cur.execute(
             """
@@ -340,7 +367,11 @@ class MemoryStore:
                 customer_id=req.customer_id,
                 agent_id=req.agent_id,
                 session_id=req.session_id,
-                purpose=(req.purpose.allowed_purposes[0] if req.purpose.allowed_purposes else None),
+                # allowed_purposes is a retrieval restriction on the memory,
+                # not the purpose of the write operation itself.  Passing the
+                # first value here made multi-purpose writes accidentally
+                # fail storage policy evaluation.
+                purpose=None,
                 provenance=req.provenance,
                 source_type=req.provenance.source_type,
                 content=req.content,
@@ -460,15 +491,41 @@ class MemoryStore:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _content_fingerprint(tenant_id: str, content: str | None) -> str | None:
-        """Return a tenant-scoped HMAC without persisting raw external content."""
+    def _normalized_content(content: str | None) -> str | None:
         if content is None:
             return None
-        secret = os.getenv("GOVERNEDMEMORY_FINGERPRINT_SECRET", "governedmemory-dev-secret")
-        normalized = " ".join(content.strip().lower().split())
+        return " ".join(content.strip().lower().split())
+
+    @classmethod
+    def _content_digest(cls, content: str | None) -> str | None:
+        normalized = cls._normalized_content(content)
+        if normalized is None:
+            return None
+        return hashlib.sha256(normalized.encode()).hexdigest()
+
+    @classmethod
+    def _content_fingerprint(cls, tenant_id: str, content: str | None) -> str | None:
+        """Return a tenant-scoped HMAC only when explicitly enabled."""
+        if content is None:
+            return None
+        enabled = os.getenv("GOVERNEDMEMORY_FINGERPRINTS_ENABLED", "false").lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        if not enabled:
+            return None
+        secret = os.getenv("GOVERNEDMEMORY_FINGERPRINT_SECRET")
+        if not secret:
+            raise FingerprintConfigurationError(
+                "GOVERNEDMEMORY_FINGERPRINT_SECRET is required when fingerprints are enabled"
+            )
+        # Derive a tenant-specific key from the configured root secret, then
+        # HMAC only the normalized content with that derived key.
+        tenant_key = hmac.new(secret.encode(), tenant_id.encode(), hashlib.sha256).digest()
         return hmac.new(
-            secret.encode(),
-            f"{tenant_id}\0{normalized}".encode(),
+            tenant_key,
+            cls._normalized_content(content).encode(),
             hashlib.sha256,
         ).hexdigest()
 
@@ -485,6 +542,7 @@ class MemoryStore:
             "purpose": request.purpose,
             "provenance": provenance,
             "source_type": request.source_type.value if request.source_type else None,
+            "content_digest": MemoryStore._content_digest(request.content),
         }
 
     @staticmethod
@@ -527,20 +585,12 @@ class MemoryStore:
             deny_severe_injection=True,
             correlation_id=correlation_id,
         )
-        operation_id = str(uuid.uuid4())
-        decision.operation_id = operation_id
-        status_value = "denied" if decision.storage == "deny" else "evaluated"
-        outcome = (
-            AuditOutcome.DENY
-            if decision.storage == "deny"
-            else AuditOutcome.GATED
-            if decision.retrieval != "allow"
-            else AuditOutcome.ALLOW
-        )
-        reason = decision.taint_reason or f"external write evaluated: storage={decision.storage}"
-
         with self._conn() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                    (f"mem0:external_add:{request.tenant_id}:{idempotency_key}",),
+                )
                 cur.execute(
                     """SELECT * FROM external_governance_operations
                        WHERE tenant_id = %s AND external_system = 'mem0'
@@ -553,9 +603,37 @@ class MemoryStore:
                     if existing["content_fingerprint"] != fingerprint or _jsonb_dict(
                         existing["context"]
                     ) != self._operation_context(request):
-                        raise ValueError("idempotency_key was reused with different content or context")
+                        raise IdempotencyConflict(
+                            "idempotency_key was reused with different content or context"
+                        )
+                    if (
+                        existing["status"] == "failed"
+                        and existing["retry_count"] < existing["max_attempts"]
+                    ):
+                        cur.execute(
+                            """UPDATE external_governance_operations
+                               SET status = 'evaluated', failure_reason = NULL,
+                                   updated_at = NOW()
+                               WHERE id = %s""",
+                            (existing["id"],),
+                        )
+                        existing["status"] = "evaluated"
+                        existing["failure_reason"] = None
                     return self._decision_from_operation(existing)
 
+                operation_id = str(uuid.uuid4())
+                decision.operation_id = operation_id
+                status_value = "denied" if decision.storage == "deny" else "evaluated"
+                outcome = (
+                    AuditOutcome.DENY
+                    if decision.storage == "deny"
+                    else AuditOutcome.GATED
+                    if decision.retrieval != "allow"
+                    else AuditOutcome.ALLOW
+                )
+                reason = (
+                    decision.taint_reason or f"external write evaluated: storage={decision.storage}"
+                )
                 audit_id = self._audit_in_tx(
                     cur,
                     request.tenant_id,
@@ -617,9 +695,20 @@ class MemoryStore:
                     )
                     operation = cur.fetchone()
                     if operation is None:
-                        raise ValueError("governance operation not found")
+                        raise ExternalOperationNotFound("governance operation not found")
+                    known_ids = _jsonb_list(operation.get("external_memory_ids", []))
+                    if known_ids and known_ids != ids:
+                        raise ExternalBindingConflict(
+                            "external memory IDs do not match the first successful Mem0 result",
+                            metadata={"external_memory_ids": known_ids},
+                        )
                     if operation["status"] == "denied":
-                        raise ValueError("a denied operation cannot be bound")
+                        raise ExternalOperationFailed("a denied operation cannot be bound")
+                    if operation["status"] == "failed":
+                        raise ExternalOperationFailed(
+                            "external operation is terminally failed",
+                            metadata={"correlation_id": correlation_id},
+                        )
                     if operation["status"] == "completed":
                         return self._decision_from_operation(operation)
 
@@ -649,7 +738,9 @@ class MemoryStore:
                         )
                         existing = cur.fetchone()
                         if existing and str(existing["operation_id"]) != str(operation["id"]):
-                            raise ValueError(f"external memory ID already bound: {external_id}")
+                            raise ExternalBindingConflict(
+                                f"external memory ID already bound: {external_id}"
+                            )
                         cur.execute(
                             """INSERT INTO external_memory_bindings (
                                    tenant_id, external_system, external_memory_id,
@@ -672,7 +763,7 @@ class MemoryStore:
                                 json.dumps(provenance),
                                 decision.taint.value,
                                 decision.policy_id,
-                                "active" if decision.taint == Taint.TRUSTED else "quarantined",
+                                "active",
                                 operation["content_fingerprint"],
                             ),
                         )
@@ -708,11 +799,16 @@ class MemoryStore:
                         (json.dumps(decision.model_dump(mode="json")), operation["id"]),
                     )
                     return decision
+        except ExternalBindingConflict as exc:
+            self._mark_binding_pending(tenant_id, correlation_id, str(exc), ids)
+            raise
+        except ExternalGovernanceError:
+            raise
         except Exception as exc:
-            self._mark_external_operation_failed(tenant_id, correlation_id, str(exc), ids)
+            self._mark_binding_pending(tenant_id, correlation_id, str(exc), ids)
             raise
 
-    def _mark_external_operation_failed(
+    def _mark_binding_pending(
         self,
         tenant_id: str,
         correlation_id: str,
@@ -745,6 +841,67 @@ class MemoryStore:
                     ),
                 )
 
+    def mark_external_failure(
+        self,
+        tenant_id: str,
+        correlation_id: str,
+        reason: str,
+        external_memory_ids: list[str] | None = None,
+    ) -> GovernanceDecision:
+        """Record a failed Mem0 call with bounded retry semantics."""
+        _require_tenant(tenant_id)
+        ids = list(dict.fromkeys(i.strip() for i in (external_memory_ids or []) if i and i.strip()))
+        with self._conn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    """SELECT * FROM external_governance_operations
+                       WHERE tenant_id = %s AND correlation_id = %s FOR UPDATE""",
+                    (tenant_id, correlation_id),
+                )
+                operation = cur.fetchone()
+                if operation is None:
+                    raise ExternalOperationNotFound("governance operation not found")
+                known_ids = _jsonb_list(operation.get("external_memory_ids", []))
+                if known_ids and ids and known_ids != ids:
+                    raise ExternalBindingConflict(
+                        "external memory IDs do not match the first known result",
+                        metadata={"external_memory_ids": known_ids},
+                    )
+                if operation["status"] in {"completed", "denied"}:
+                    return self._decision_from_operation(operation)
+                attempt = operation["retry_count"] + 1
+                terminal = attempt >= operation["max_attempts"]
+                stored_ids = known_ids or ids
+                decision = _jsonb_dict(operation["decision"])
+                decision.update(
+                    {
+                        "external_memory_ids": stored_ids,
+                        "failure_reason": reason,
+                        "status": "failed" if terminal else "evaluated",
+                    }
+                )
+                cur.execute(
+                    """UPDATE external_governance_operations
+                       SET status = %s, failure_reason = %s,
+                           retry_count = %s, external_memory_ids = %s,
+                           decision = %s, last_failure_at = NOW(), updated_at = NOW()
+                       WHERE id = %s""",
+                    (
+                        "failed" if terminal else "evaluated",
+                        reason,
+                        attempt,
+                        json.dumps(stored_ids),
+                        json.dumps(decision),
+                        operation["id"],
+                    ),
+                )
+                operation["status"] = "failed" if terminal else "evaluated"
+                operation["failure_reason"] = reason
+                operation["retry_count"] = attempt
+                operation["external_memory_ids"] = stored_ids
+                operation["decision"] = decision
+                return self._decision_from_operation(operation)
+
     def retry_binding(
         self, tenant_id: str, correlation_id: str, external_memory_ids: list[str]
     ) -> GovernanceDecision:
@@ -756,6 +913,7 @@ class MemoryStore:
         tenant_id: str,
         candidates: list[ExternalMemoryCandidate],
         *,
+        customer_id: str | None = None,
         agent_id: str,
         session_id: str,
         purpose: str | None = None,
@@ -771,6 +929,7 @@ class MemoryStore:
 
         operation_key = idempotency_key or f"candidate-{uuid.uuid4()}"
         expected_context = {
+            "customer_id": customer_id,
             "agent_id": agent_id,
             "session_id": session_id,
             "purpose": purpose,
@@ -781,7 +940,7 @@ class MemoryStore:
             with self._conn() as conn:
                 with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                     cur.execute(
-                        """SELECT id, correlation_id, decision, evaluation_audit_id
+                        """SELECT id, correlation_id, context, decision, evaluation_audit_id
                            FROM external_governance_operations
                            WHERE tenant_id = %s AND external_system = 'mem0'
                              AND operation_type = 'external_candidate'
@@ -791,7 +950,9 @@ class MemoryStore:
                     existing = cur.fetchone()
                     if existing:
                         if _jsonb_dict(existing["context"]) != expected_context:
-                            raise ValueError("idempotency_key was reused with different context")
+                            raise IdempotencyConflict(
+                                "idempotency_key was reused with different context"
+                            )
                         payload = _jsonb_dict(existing["decision"])
                         return ExternalCandidateEvaluation(
                             operation_id=str(existing["id"]),
@@ -807,7 +968,9 @@ class MemoryStore:
                             ),
                         )
 
-        ids = [candidate.external_memory_id for candidate in candidates if candidate.external_memory_id]
+        ids = [
+            candidate.external_memory_id for candidate in candidates if candidate.external_memory_id
+        ]
         bindings: dict[str, dict] = {}
         if ids:
             with self._conn() as conn:
@@ -841,6 +1004,40 @@ class MemoryStore:
                         status="untracked",
                         decision="exclude" if compatibility_mode == "strict" else "allow",
                         reason="no GovernedMemory binding exists for this Mem0 ID",
+                    )
+                )
+                continue
+            if customer_id is not None and binding["customer_id"] != customer_id:
+                decisions.append(
+                    ExternalCandidateDecision(
+                        external_memory_id=external_id,
+                        status="scope_restricted",
+                        decision="exclude",
+                        reason="external memory belongs to a different customer",
+                    )
+                )
+                continue
+            if binding["agent_id"] and binding["agent_id"] != agent_id:
+                decisions.append(
+                    ExternalCandidateDecision(
+                        external_memory_id=external_id,
+                        status="scope_restricted",
+                        decision="exclude",
+                        reason="external memory belongs to a different agent scope",
+                    )
+                )
+                continue
+            if (
+                session_id != "mem0-search"
+                and binding["session_id"]
+                and binding["session_id"] != session_id
+            ):
+                decisions.append(
+                    ExternalCandidateDecision(
+                        external_memory_id=external_id,
+                        status="scope_restricted",
+                        decision="exclude",
+                        reason="external memory belongs to a different run scope",
                     )
                 )
                 continue
@@ -909,9 +1106,92 @@ class MemoryStore:
         correlation_id = str(uuid.uuid4())
         operation_id = str(uuid.uuid4())
         overall = "allow" if all(d.decision == "allow" for d in decisions) else "exclude"
-        audit_outcome = AuditOutcome.ALLOW if overall == "allow" else AuditOutcome.GATED
         with self._conn() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                    (f"mem0:external_candidate:{tenant_id}:{operation_key}",),
+                )
+                if idempotency_key:
+                    cur.execute(
+                        """SELECT id, correlation_id, context, decision, evaluation_audit_id
+                           FROM external_governance_operations
+                           WHERE tenant_id = %s AND external_system = 'mem0'
+                             AND operation_type = 'external_candidate'
+                             AND idempotency_key = %s FOR UPDATE""",
+                        (tenant_id, operation_key),
+                    )
+                    existing = cur.fetchone()
+                    if existing:
+                        if _jsonb_dict(existing["context"]) != expected_context:
+                            raise IdempotencyConflict(
+                                "idempotency_key was reused with different context"
+                            )
+                        payload = _jsonb_dict(existing["decision"])
+                        return ExternalCandidateEvaluation(
+                            operation_id=str(existing["id"]),
+                            correlation_id=existing["correlation_id"],
+                            decisions=[
+                                ExternalCandidateDecision(**d)
+                                for d in payload.get("candidate_decisions", [])
+                            ],
+                            audit_id=(
+                                str(existing["evaluation_audit_id"])
+                                if existing["evaluation_audit_id"]
+                                else None
+                            ),
+                        )
+                cur.execute(
+                    """INSERT INTO external_governance_operations (
+                           id, tenant_id, external_system, operation_type,
+                           idempotency_key, correlation_id, storage_decision,
+                           retrieval_decision, taint, policy_id, context,
+                           decision, status, evaluation_audit_id
+                       ) VALUES (%s, %s, 'mem0', 'external_candidate', %s, %s,
+                                 'allow', %s, 'trusted', 'default', %s, %s,
+                                 'completed', NULL)
+                       ON CONFLICT (tenant_id, external_system, operation_type, idempotency_key)
+                       DO NOTHING
+                       RETURNING id""",
+                    (
+                        operation_id,
+                        tenant_id,
+                        operation_key,
+                        correlation_id,
+                        "allow" if overall == "allow" else "exclude",
+                        json.dumps(expected_context),
+                        json.dumps({}),
+                    ),
+                )
+                inserted = cur.fetchone()
+                if inserted is None:
+                    cur.execute(
+                        """SELECT id, correlation_id, context, decision, evaluation_audit_id
+                           FROM external_governance_operations
+                           WHERE tenant_id = %s AND external_system = 'mem0'
+                             AND operation_type = 'external_candidate'
+                             AND idempotency_key = %s FOR UPDATE""",
+                        (tenant_id, operation_key),
+                    )
+                    winner = cur.fetchone()
+                    if winner is None or _jsonb_dict(winner["context"]) != expected_context:
+                        raise IdempotencyConflict(
+                            "idempotency_key was reused with different context"
+                        )
+                    payload = _jsonb_dict(winner["decision"])
+                    return ExternalCandidateEvaluation(
+                        operation_id=str(winner["id"]),
+                        correlation_id=winner["correlation_id"],
+                        decisions=[
+                            ExternalCandidateDecision(**d)
+                            for d in payload.get("candidate_decisions", [])
+                        ],
+                        audit_id=(
+                            str(winner["evaluation_audit_id"])
+                            if winner["evaluation_audit_id"]
+                            else None
+                        ),
+                    )
                 audit_id = self._audit_in_tx(
                     cur,
                     tenant_id,
@@ -920,7 +1200,7 @@ class MemoryStore:
                     AuditOp.EXTERNAL_EVALUATION,
                     [i for i in ids if i],
                     AuditDecision(
-                        outcome=audit_outcome,
+                        outcome=AuditOutcome.ALLOW if overall == "allow" else AuditOutcome.GATED,
                         reason=f"evaluated {len(decisions)} external candidates",
                     ),
                 )
@@ -937,32 +1217,38 @@ class MemoryStore:
                     "candidate_decisions": [d.model_dump() for d in decisions],
                 }
                 cur.execute(
-                    """INSERT INTO external_governance_operations (
-                           id, tenant_id, external_system, operation_type,
-                           idempotency_key, correlation_id, storage_decision,
-                           retrieval_decision, taint, policy_id, context,
-                           decision, status, evaluation_audit_id
-                       ) VALUES (%s, %s, 'mem0', 'external_candidate', %s, %s,
-                                 'allow', %s, 'trusted', 'default', %s, %s,
-                                 'completed', %s)
-                       ON CONFLICT (tenant_id, external_system, operation_type, idempotency_key)
-                       DO NOTHING""",
-                    (
-                        operation_id,
-                        tenant_id,
-                        operation_key,
-                        correlation_id,
-                        "allow" if overall == "allow" else "exclude",
-                        json.dumps(expected_context),
-                        json.dumps(decision_payload),
-                        audit_id,
-                    ),
+                    """UPDATE external_governance_operations
+                       SET decision = %s, evaluation_audit_id = %s
+                       WHERE id = %s""",
+                    (json.dumps(decision_payload), audit_id, operation_id),
                 )
         return ExternalCandidateEvaluation(
             operation_id=operation_id,
             correlation_id=correlation_id,
             decisions=decisions,
             audit_id=audit_id,
+        )
+
+    @staticmethod
+    def _external_governance_from_row(row: dict) -> ExternalMemoryGovernance:
+        return ExternalMemoryGovernance(
+            external_system=row["external_system"],
+            external_memory_id=row["external_memory_id"],
+            operation_id=str(row["operation_uuid"]),
+            tenant_id=row["tenant_id"],
+            customer_id=row["customer_id"],
+            agent_id=row["agent_id"],
+            session_id=row["session_id"],
+            purpose=row["purpose"],
+            provenance=_jsonb_dict(row["provenance"]),
+            taint=row["taint"],
+            quarantine_status=row["quarantine_status"],
+            policy_id=row["policy_id"],
+            lifecycle_state=row["lifecycle_state"],
+            binding_audit_id=(str(row["binding_audit_id"]) if row["binding_audit_id"] else None),
+            quarantine_audit_id=(
+                str(row["quarantine_audit_id"]) if row["quarantine_audit_id"] else None
+            ),
         )
 
     def get_external_governance(
@@ -982,31 +1268,18 @@ class MemoryStore:
                 row = cur.fetchone()
         if row is None:
             return None
-        return ExternalMemoryGovernance(
-            external_system=row["external_system"],
-            external_memory_id=row["external_memory_id"],
-            operation_id=str(row["operation_uuid"]),
-            tenant_id=row["tenant_id"],
-            customer_id=row["customer_id"],
-            agent_id=row["agent_id"],
-            session_id=row["session_id"],
-            purpose=row["purpose"],
-            provenance=_jsonb_dict(row["provenance"]),
-            taint=row["taint"],
-            quarantine_status=row["quarantine_status"],
-            policy_id=row["policy_id"],
-            lifecycle_state=row["lifecycle_state"],
-            content_fingerprint=row["content_fingerprint"],
-            binding_audit_id=(str(row["binding_audit_id"]) if row["binding_audit_id"] else None),
-        )
+        return self._external_governance_from_row(row)
 
     def quarantine_external_memory(
-        self, tenant_id: str, external_memory_id: str, reason: str = "manual quarantine"
+        self,
+        tenant_id: str,
+        external_memory_id: str,
+        reason: str = "manual quarantine",
+        *,
+        actor_id: str = "system",
+        session_id: str = "external-quarantine",
     ) -> ExternalMemoryGovernance | None:
         _require_tenant(tenant_id)
-        existing = self.get_external_governance(tenant_id, external_memory_id)
-        if existing is not None and existing.quarantine_status:
-            return existing
         with self._conn() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(
@@ -1018,13 +1291,22 @@ class MemoryStore:
                 binding = cur.fetchone()
                 if binding is None:
                     return None
+                if binding["quarantine_status"]:
+                    cur.execute(
+                        """SELECT b.*, o.id AS operation_uuid
+                           FROM external_memory_bindings b
+                           JOIN external_governance_operations o ON o.id = b.operation_id
+                           WHERE b.id = %s""",
+                        (binding["id"],),
+                    )
+                    return self._external_governance_from_row(cur.fetchone())
                 operation_id = str(uuid.uuid4())
                 correlation_id = str(uuid.uuid4())
                 audit_id = self._audit_in_tx(
                     cur,
                     tenant_id,
-                    binding["agent_id"] or "system",
-                    binding["session_id"] or "system",
+                    actor_id,
+                    session_id,
                     AuditOp.EXTERNAL_QUARANTINE,
                     [external_memory_id],
                     AuditDecision(outcome=AuditOutcome.ALLOW, reason=reason),
@@ -1041,7 +1323,7 @@ class MemoryStore:
                     (
                         operation_id,
                         tenant_id,
-                        f"quarantine:{external_memory_id}:{reason}",
+                        f"quarantine:{tenant_id}:{external_memory_id}",
                         correlation_id,
                         binding["policy_id"],
                         json.dumps({"reason": reason}),
@@ -1052,7 +1334,7 @@ class MemoryStore:
                 cur.execute(
                     """UPDATE external_memory_bindings
                        SET taint = 'quarantined', quarantine_status = TRUE,
-                           lifecycle_state = 'quarantined', binding_audit_id = %s,
+                           lifecycle_state = 'quarantined', quarantine_audit_id = %s,
                            updated_at = NOW()
                        WHERE id = %s""",
                     (audit_id, binding["id"]),

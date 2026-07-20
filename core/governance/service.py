@@ -67,9 +67,7 @@ class GovernanceEvaluationService:
         if source_untrusted:
             reasons.append(f"source_type={source_type.value}")
         if injection_flagged:
-            reasons.append(
-                f"injection_score={injection_score:.2f} ({'/'.join(injection_labels)})"
-            )
+            reasons.append(f"injection_score={injection_score:.2f} ({'/'.join(injection_labels)})")
 
         taint = Taint.UNTRUSTED if source_untrusted or injection_flagged else Taint.TRUSTED
         storage = "allow"
@@ -79,7 +77,10 @@ class GovernanceEvaluationService:
         if request.purpose and policy:
             allowed, reason = evaluate_purpose_binding(policy, request.purpose, source_type.value)
             if not allowed:
-                storage = "deny"
+                # Purpose bindings govern retrieval eligibility.  They do not
+                # reject persistence: an approved write can remain stored and
+                # be eligible for another purpose later.
+                retrieval = "purpose_restricted"
                 reasons.append(reason)
 
         if strict_untrusted_write and taint != Taint.TRUSTED:

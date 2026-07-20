@@ -57,6 +57,63 @@ class ExternalBindingPending(GovernedMemoryError):
         super().__init__(409, "external memory binding is pending")
 
 
+class ExternalOperationFailed(GovernedMemoryError):
+    """The external operation reached its bounded failure limit."""
+
+    def __init__(self, detail: dict | str):
+        self.detail_payload = detail if isinstance(detail, dict) else {"message": detail}
+        self.correlation_id = self.detail_payload.get("correlation_id")
+        self.idempotency_key = self.detail_payload.get("idempotency_key")
+        self.external_memory_ids = self.detail_payload.get("external_memory_ids", [])
+        super().__init__(409, self.detail_payload.get("message", str(detail)))
+
+
+class ExternalContractError(GovernedMemoryError):
+    """The wrapped Mem0 object returned an unsupported shape."""
+
+    def __init__(
+        self,
+        detail: str,
+        *,
+        correlation_id: str | None = None,
+        idempotency_key: str | None = None,
+    ):
+        self.correlation_id = correlation_id
+        self.idempotency_key = idempotency_key
+        super().__init__(502, detail)
+
+
+class TenantMismatch(GovernedMemoryError):
+    def __init__(self, expected: str, actual: str):
+        self.expected = expected
+        self.actual = actual
+        super().__init__(
+            403, f"configured tenant {expected!r} does not match API tenant {actual!r}"
+        )
+
+
+class IdempotencyConflictError(GovernedMemoryError):
+    def __init__(self, detail: dict | str):
+        self.detail_payload = detail if isinstance(detail, dict) else {"message": detail}
+        super().__init__(409, self.detail_payload.get("message", str(detail)))
+
+
+class ExternalBindingConflictError(IdempotencyConflictError):
+    pass
+
+
+class ExternalScopeError(GovernedMemoryError):
+    def __init__(self, detail: dict | str):
+        self.detail_payload = detail if isinstance(detail, dict) else {"message": detail}
+        super().__init__(403, self.detail_payload.get("message", str(detail)))
+
+
+class ExternalOperationNotFoundError(GovernedMemoryError):
+    def __init__(self, detail: dict | str):
+        self.detail_payload = detail if isinstance(detail, dict) else {"message": detail}
+        super().__init__(404, self.detail_payload.get("message", str(detail)))
+
+
 @dataclass
 class Source:
     """Where a memory came from. Maps to core.models.Provenance server-side
@@ -117,9 +174,30 @@ class GovernedMemory:
             detail = e.reason
             if body:
                 try:
-                    detail = json.loads(body).get("detail", detail)
+                    payload = json.loads(body)
+                    detail = payload.get("detail", detail) if isinstance(payload, dict) else payload
                 except json.JSONDecodeError:
                     pass
+            if isinstance(detail, dict):
+                code = detail.get("code")
+                if code == "external_operation_failed":
+                    raise ExternalOperationFailed(detail) from None
+                if code == "external_contract_violation":
+                    raise ExternalContractError(
+                        detail.get("message", "external contract violation")
+                    ) from None
+                if code == "tenant_mismatch":
+                    raise TenantMismatch(
+                        detail.get("expected", ""), detail.get("actual", "")
+                    ) from None
+                if code == "idempotency_conflict":
+                    raise IdempotencyConflictError(detail) from None
+                if code == "external_binding_conflict":
+                    raise ExternalBindingConflictError(detail) from None
+                if code == "external_scope_violation":
+                    raise ExternalScopeError(detail) from None
+                if code == "external_operation_not_found":
+                    raise ExternalOperationNotFoundError(detail) from None
             raise GovernedMemoryError(e.code, detail) from None
 
     def write(
@@ -211,6 +289,28 @@ class GovernedMemory:
             },
         )
 
+    def mark_external_failure(
+        self,
+        *,
+        correlation_id: str,
+        reason: str,
+        external_memory_ids: list[str] | None = None,
+    ) -> dict:
+        return self._request(
+            "POST",
+            "/v1/external-memories/fail",
+            json_body={
+                "correlation_id": correlation_id,
+                "reason": reason,
+                "external_memory_ids": external_memory_ids or [],
+            },
+        )
+
+    def assert_tenant(self, expected_tenant_id: str) -> None:
+        actual = self._request("GET", "/v1/identity")["tenant_id"]
+        if actual != expected_tenant_id:
+            raise TenantMismatch(expected_tenant_id, actual)
+
     def bind_external_memories(
         self, *, correlation_id: str, external_memory_ids: list[str]
     ) -> dict:
@@ -237,6 +337,7 @@ class GovernedMemory:
         self,
         *,
         candidates: list[dict],
+        customer_id: str | None = None,
         agent_id: str,
         session_id: str,
         purpose: str | None = None,
@@ -248,6 +349,7 @@ class GovernedMemory:
             "/v1/external-memories/evaluate-candidates",
             json_body={
                 "candidates": candidates,
+                "customer_id": customer_id,
                 "agent_id": agent_id,
                 "session_id": session_id,
                 "purpose": purpose,
@@ -257,15 +359,20 @@ class GovernedMemory:
         )
 
     def get_external_governance(self, external_memory_id: str) -> dict:
-        return self._request(
-            "GET", f"/v1/external-memories/{external_memory_id}/governance"
-        )
+        return self._request("GET", f"/v1/external-memories/{external_memory_id}/governance")
 
-    def quarantine_external_memory(self, external_memory_id: str, reason: str = "manual quarantine") -> dict:
+    def quarantine_external_memory(
+        self,
+        external_memory_id: str,
+        reason: str = "manual quarantine",
+        *,
+        agent_id: str = "system",
+        session_id: str = "external-quarantine",
+    ) -> dict:
         return self._request(
             "POST",
             f"/v1/external-memories/{external_memory_id}/quarantine",
-            json_body={"reason": reason},
+            json_body={"reason": reason, "agent_id": agent_id, "session_id": session_id},
         )
 
     def delete(self, memory_id: str, cascade: bool = False) -> bool:

@@ -14,9 +14,10 @@ from typing import Any
 
 from ..client import (
     ExternalBindingPending,
+    ExternalContractError,
+    ExternalOperationFailed,
     GovernanceDenied,
     GovernedMemory,
-    GovernedMemoryError,
     Source,
 )
 
@@ -46,6 +47,9 @@ class GovernedMem0:
         self.agent_id = agent_id
         self.compatibility_mode = compatibility_mode
         self.untrusted_write_mode = untrusted_write_mode
+        assert_tenant = getattr(governance, "assert_tenant", None)
+        if assert_tenant is not None:
+            assert_tenant(tenant_id)
 
     @staticmethod
     def _message_content(messages: Any) -> str:
@@ -64,11 +68,20 @@ class GovernedMem0:
     @staticmethod
     def _result_items(result: Any) -> tuple[list[Any], bool]:
         if isinstance(result, Mapping):
-            items = result.get("results", [])
-            return (items if isinstance(items, list) else [], True)
+            if "results" not in result or not isinstance(result["results"], list):
+                raise ExternalContractError(
+                    "Mem0 result must contain a list-valued 'results' field"
+                )
+            items = result["results"]
+            mapping_result = True
         if isinstance(result, list):
-            return result, False
-        return [], False
+            items = result
+            mapping_result = False
+        if not isinstance(result, (Mapping, list)):
+            raise ExternalContractError("Mem0 result must be a list or mapping with 'results'")
+        if any(not isinstance(item, Mapping) for item in items):
+            raise ExternalContractError("each Mem0 result item must be a mapping")
+        return items, mapping_result
 
     @staticmethod
     def _external_id(item: Any) -> str | None:
@@ -78,6 +91,13 @@ class GovernedMem0:
         if value is None and isinstance(item.get("metadata"), Mapping):
             value = item["metadata"].get("id")
         return str(value) if value is not None else None
+
+    @classmethod
+    def _external_ids(cls, items: list[Any], *, require_ids: bool) -> list[str | None]:
+        ids = [cls._external_id(item) for item in items]
+        if require_ids and any(not external_id for external_id in ids):
+            raise ExternalContractError("Mem0 write results must include stable IDs")
+        return ids
 
     @staticmethod
     def _with_governance(result: Any, governance: dict) -> Any:
@@ -97,14 +117,22 @@ class GovernedMem0:
         idempotency_key: str,
     ) -> tuple[str, str, str, str | None, Source]:
         metadata = metadata or {}
-        customer_id = str(user_id or metadata.get("customer_id") or agent_id or self.agent_id or "default")
+        customer_id = str(
+            user_id or metadata.get("customer_id") or agent_id or self.agent_id or "default"
+        )
         resolved_agent = str(agent_id or metadata.get("agent_id") or self.agent_id or "mem0-agent")
         session_id = str(run_id or metadata.get("session_id") or idempotency_key)
         purpose = metadata.get("purpose")
         source_type = str(metadata.get("source_type") or "user")
         source_ref = str(metadata.get("source_ref") or f"mem0:{idempotency_key}")
-        return customer_id, resolved_agent, session_id, purpose, Source(
-            type=source_type, ref=source_ref, confidence=float(metadata.get("confidence", 1.0))
+        return (
+            customer_id,
+            resolved_agent,
+            session_id,
+            purpose,
+            Source(
+                type=source_type, ref=source_ref, confidence=float(metadata.get("confidence", 1.0))
+            ),
         )
 
     def add(
@@ -134,16 +162,28 @@ class GovernedMem0:
         purpose = purpose or metadata_purpose
         strict = (untrusted_write_mode or self.untrusted_write_mode) == "deny"
         content = self._message_content(messages)
-        evaluation = self.governance.evaluate_external_write(
-            customer_id=customer_id,
-            agent_id=resolved_agent,
-            session_id=session_id,
-            content=content,
-            source=source,
-            purpose=purpose,
-            idempotency_key=key,
-            strict_untrusted_write=strict,
-        )
+        correlation_id = str(uuid.uuid4())
+        try:
+            evaluation = self.governance.evaluate_external_write(
+                customer_id=customer_id,
+                agent_id=resolved_agent,
+                session_id=session_id,
+                content=content,
+                source=source,
+                purpose=purpose,
+                idempotency_key=key,
+                strict_untrusted_write=strict,
+                correlation_id=correlation_id,
+            )
+        except Exception as exc:
+            raise ExternalOperationFailed(
+                {
+                    "message": "GovernedMemory evaluation failed; retry with the same idempotency key",
+                    "correlation_id": correlation_id,
+                    "idempotency_key": key,
+                    "failure_reason": str(exc),
+                }
+            ) from exc
         if evaluation.get("storage") == "deny":
             raise GovernanceDenied(evaluation)
         if evaluation.get("status") == "completed":
@@ -159,6 +199,16 @@ class GovernedMem0:
                 evaluation["correlation_id"],
                 key,
                 evaluation.get("external_memory_ids", []),
+            )
+        if evaluation.get("status") == "failed":
+            raise ExternalOperationFailed(
+                {
+                    "message": evaluation.get("failure_reason") or "external operation failed",
+                    "correlation_id": evaluation.get("correlation_id"),
+                    "idempotency_key": key,
+                    "external_memory_ids": evaluation.get("external_memory_ids", []),
+                    "status": "failed",
+                }
             )
 
         mem0_metadata = dict(metadata or {})
@@ -177,22 +227,49 @@ class GovernedMem0:
                 metadata=mem0_metadata,
                 **mem0_kwargs,
             )
-        except Exception:
-            raise
+        except Exception as exc:
+            try:
+                failure = self.governance.mark_external_failure(
+                    correlation_id=evaluation["correlation_id"],
+                    reason=f"Mem0 add failed: {exc}",
+                )
+            except Exception:
+                failure = {}
+            raise ExternalOperationFailed(
+                {
+                    "message": "Mem0 add failed; retry with the same idempotency key",
+                    "correlation_id": evaluation["correlation_id"],
+                    "idempotency_key": key,
+                    "status": failure.get("status", "evaluated"),
+                    "failure_reason": str(exc),
+                }
+            ) from exc
 
-        items, _ = self._result_items(result)
-        external_ids = [external_id for external_id in (self._external_id(i) for i in items) if external_id]
-        if not external_ids:
-            raise GovernedMemoryError(502, "Mem0 returned no stable memory IDs; governance binding is impossible")
+        try:
+            items, _ = self._result_items(result)
+            external_ids = [
+                external_id
+                for external_id in self._external_ids(items, require_ids=True)
+                if external_id
+            ]
+        except ExternalContractError as exc:
+            try:
+                self.governance.mark_external_failure(
+                    correlation_id=evaluation["correlation_id"],
+                    reason=str(exc),
+                )
+            except Exception:
+                pass
+            exc.correlation_id = evaluation["correlation_id"]
+            exc.idempotency_key = key
+            raise
         try:
             bound = self.governance.bind_external_memories(
                 correlation_id=evaluation["correlation_id"],
                 external_memory_ids=external_ids,
             )
         except Exception as exc:
-            raise ExternalBindingPending(
-                evaluation["correlation_id"], key, external_ids
-            ) from exc
+            raise ExternalBindingPending(evaluation["correlation_id"], key, external_ids) from exc
         return self._with_governance(
             result,
             {
@@ -228,20 +305,37 @@ class GovernedMem0:
             top_k=top_k,
             **mem0_kwargs,
         )
-        items, mapping_result = self._result_items(result)
+        try:
+            items, mapping_result = self._result_items(result)
+        except ExternalContractError as exc:
+            raise ExternalContractError(str(exc)) from exc
         resolved_agent = agent_id or self.agent_id or "mem0-agent"
         session_id = run_id or "mem0-search"
         candidates = [{"external_memory_id": self._external_id(item)} for item in items]
         evaluation = self.governance.evaluate_external_candidates(
             candidates=candidates,
+            customer_id=user_id,
             agent_id=resolved_agent,
             session_id=session_id,
             purpose=purpose,
             compatibility_mode=self.compatibility_mode,
         )
+        decisions = evaluation.get("decisions", [])
+        if len(decisions) != len(items):
+            raise ExternalContractError(
+                f"GovernedMemory returned {len(decisions)} decisions for {len(items)} Mem0 results"
+            )
+        candidate_ids = self._external_ids(items, require_ids=False)
+        for index, (candidate_id, decision) in enumerate(
+            zip(candidate_ids, decisions, strict=True)
+        ):
+            if decision.get("external_memory_id") != candidate_id:
+                raise ExternalContractError(
+                    f"candidate decision {index} does not match Mem0 result order or ID"
+                )
         kept: list[Any] = []
-        annotated: list[dict] = list(evaluation.get("decisions", []))
-        for item, decision in zip(items, evaluation.get("decisions", []), strict=False):
+        annotated: list[dict] = list(decisions)
+        for item, decision in zip(items, decisions, strict=True):
             if decision["decision"] == "exclude":
                 continue
             if self.compatibility_mode == "observe" and decision["status"] in {
@@ -275,9 +369,21 @@ class GovernedMem0:
             },
         )
 
-    def quarantine(self, external_memory_id: str, reason: str = "manual quarantine") -> dict:
+    def quarantine(
+        self,
+        external_memory_id: str,
+        reason: str = "manual quarantine",
+        *,
+        agent_id: str = "system",
+        session_id: str = "external-quarantine",
+    ) -> dict:
         """Quarantine governance metadata without deleting from Mem0."""
-        return self.governance.quarantine_external_memory(external_memory_id, reason)
+        return self.governance.quarantine_external_memory(
+            external_memory_id,
+            reason,
+            agent_id=agent_id,
+            session_id=session_id,
+        )
 
     def get_governance(self, external_memory_id: str) -> dict:
         return self.governance.get_external_governance(external_memory_id)

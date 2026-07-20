@@ -86,8 +86,15 @@ class ExternalBindingBody(BaseModel):
     external_memory_ids: list[str]
 
 
+class ExternalFailureBody(BaseModel):
+    correlation_id: str
+    reason: str
+    external_memory_ids: list[str] = Field(default_factory=list)
+
+
 class ExternalCandidateEvaluationBody(BaseModel):
     candidates: list[ExternalMemoryCandidate]
+    customer_id: str | None = None
     agent_id: str = "system"
     session_id: str = "system"
     purpose: str | None = None
@@ -97,3 +104,5 @@ class ExternalCandidateEvaluationBody(BaseModel):
 
 class ExternalQuarantineBody(BaseModel):
     reason: str = "manual quarantine"
+    agent_id: str = "system"
+    session_id: str = "external-quarantine"
