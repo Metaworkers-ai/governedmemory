@@ -641,19 +641,6 @@ class MemoryStore:
                         raise IdempotencyConflict(
                             "idempotency_key was reused with different content or context"
                         )
-                    if (
-                        existing["status"] == "failed"
-                        and existing["retry_count"] < existing["max_attempts"]
-                    ):
-                        cur.execute(
-                            """UPDATE external_governance_operations
-                               SET status = 'evaluated', failure_reason = NULL,
-                                   updated_at = NOW()
-                               WHERE id = %s""",
-                            (existing["id"],),
-                        )
-                        existing["status"] = "evaluated"
-                        existing["failure_reason"] = None
                     return self._decision_from_operation(existing)
 
                 operation_id = str(uuid.uuid4())
@@ -720,6 +707,8 @@ class MemoryStore:
         if not ids:
             raise ValueError("at least one external memory ID is required")
 
+        conflict_to_raise: ExternalBindingConflict | None = None
+        result: GovernanceDecision | None = None
         try:
             with self._conn() as conn:
                 with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -732,11 +721,13 @@ class MemoryStore:
                     if operation is None:
                         raise ExternalOperationNotFound("governance operation not found")
                     known_ids = _jsonb_list(operation.get("external_memory_ids", []))
-                    if known_ids and known_ids != ids:
-                        raise ExternalBindingConflict(
-                            "external memory IDs do not match the first successful Mem0 result",
-                            metadata={"external_memory_ids": known_ids},
-                        )
+                    if operation["status"] == "completed":
+                        if known_ids != ids:
+                            raise ExternalBindingConflict(
+                                "completed operation IDs do not match the submitted Mem0 result",
+                                metadata={"external_memory_ids": known_ids},
+                            )
+                        return self._decision_from_operation(operation)
                     if operation["status"] == "denied":
                         raise ExternalOperationFailed("a denied operation cannot be bound")
                     if operation["status"] == "failed":
@@ -744,109 +735,152 @@ class MemoryStore:
                             "external operation is terminally failed",
                             metadata={"correlation_id": correlation_id},
                         )
-                    if operation["status"] == "completed":
-                        return self._decision_from_operation(operation)
-
-                    decision = self._decision_from_operation(operation)
-                    context = _jsonb_dict(operation["context"])
-                    provenance = context.get("provenance") or {}
-                    cur.execute(
-                        """UPDATE external_governance_operations
-                           SET status = 'external_succeeded', external_memory_ids = %s,
-                               updated_at = NOW()
-                           WHERE id = %s AND status IN ('evaluated', 'binding_pending')""",
-                        (json.dumps(ids), operation["id"]),
-                    )
-                    cur.execute(
-                        """UPDATE external_governance_operations
-                           SET status = 'binding_pending', updated_at = NOW()
-                           WHERE id = %s AND status = 'external_succeeded'""",
-                        (operation["id"],),
-                    )
-
-                    for external_id in ids:
-                        cur.execute(
-                            """SELECT operation_id FROM external_memory_bindings
-                               WHERE tenant_id = %s AND external_system = 'mem0'
-                                 AND external_memory_id = %s FOR UPDATE""",
-                            (tenant_id, external_id),
+                    if known_ids and known_ids != ids:
+                        conflict_to_raise = ExternalBindingConflict(
+                            "external memory IDs do not match the first successful Mem0 result",
+                            metadata={"external_memory_ids": known_ids},
                         )
-                        existing = cur.fetchone()
-                        if existing and str(existing["operation_id"]) != str(operation["id"]):
-                            raise ExternalBindingConflict(
-                                f"external memory ID already bound: {external_id}"
+                        self._set_binding_pending_in_tx(
+                            cur,
+                            operation,
+                            str(conflict_to_raise),
+                            known_ids,
+                        )
+                        result = self._decision_from_operation(operation)
+                    else:
+                        decision = self._decision_from_operation(operation)
+                        context = _jsonb_dict(operation["context"])
+                        provenance = context.get("provenance") or {}
+                        cur.execute(
+                            """UPDATE external_governance_operations
+                               SET status = 'external_succeeded', external_memory_ids = %s,
+                                   updated_at = NOW()
+                               WHERE id = %s AND status IN ('evaluated', 'binding_pending')""",
+                            (json.dumps(ids), operation["id"]),
+                        )
+                        cur.execute(
+                            """UPDATE external_governance_operations
+                               SET status = 'binding_pending', updated_at = NOW()
+                               WHERE id = %s AND status = 'external_succeeded'""",
+                            (operation["id"],),
+                        )
+
+                        cur.execute("SAVEPOINT external_binding_rows")
+                        # Claim shared external IDs in a deterministic order so
+                        # two multi-ID operations cannot deadlock by inserting
+                        # the same IDs in opposite orders.
+                        for external_id in sorted(ids):
+                            cur.execute(
+                                """INSERT INTO external_memory_bindings (
+                                       tenant_id, external_system, external_memory_id,
+                                       operation_id, customer_id, agent_id, session_id,
+                                       purpose, provenance, taint, quarantine_status,
+                                       policy_id, lifecycle_state, content_fingerprint
+                                   ) VALUES (
+                                       %s, 'mem0', %s, %s, %s, %s, %s, %s, %s, %s,
+                                       FALSE, %s, %s, %s
+                                   ) ON CONFLICT (
+                                       tenant_id, external_system, external_memory_id
+                                   ) DO NOTHING
+                                   RETURNING operation_id""",
+                                (
+                                    tenant_id,
+                                    external_id,
+                                    operation["id"],
+                                    context.get("customer_id"),
+                                    context.get("agent_id"),
+                                    context.get("session_id"),
+                                    context.get("purpose"),
+                                    json.dumps(provenance),
+                                    decision.taint.value,
+                                    decision.policy_id,
+                                    "active",
+                                    operation["content_fingerprint"],
+                                ),
                             )
-                        cur.execute(
-                            """INSERT INTO external_memory_bindings (
-                                   tenant_id, external_system, external_memory_id,
-                                   operation_id, customer_id, agent_id, session_id,
-                                   purpose, provenance, taint, quarantine_status,
-                                   policy_id, lifecycle_state, content_fingerprint
-                               ) VALUES (
-                                   %s, 'mem0', %s, %s, %s, %s, %s, %s, %s, %s,
-                                   FALSE, %s, %s, %s
-                               ) ON CONFLICT (tenant_id, external_system, external_memory_id)
-                               DO UPDATE SET updated_at = NOW()""",
-                            (
-                                tenant_id,
-                                external_id,
-                                operation["id"],
-                                context.get("customer_id"),
-                                context.get("agent_id"),
-                                context.get("session_id"),
-                                context.get("purpose"),
-                                json.dumps(provenance),
-                                decision.taint.value,
-                                decision.policy_id,
-                                "active",
-                                operation["content_fingerprint"],
-                            ),
-                        )
+                            inserted = cur.fetchone()
+                            if inserted is not None:
+                                continue
+                            cur.execute(
+                                """SELECT operation_id FROM external_memory_bindings
+                                   WHERE tenant_id = %s AND external_system = 'mem0'
+                                     AND external_memory_id = %s FOR UPDATE""",
+                                (tenant_id, external_id),
+                            )
+                            existing = cur.fetchone()
+                            if existing and str(existing["operation_id"]) == str(operation["id"]):
+                                continue
+                            conflict_to_raise = ExternalBindingConflict(
+                                f"external memory ID already bound: {external_id}",
+                                metadata={"external_memory_ids": ids},
+                            )
+                            break
 
-                    audit_id = self._audit_in_tx(
-                        cur,
-                        tenant_id,
-                        context.get("agent_id") or "system",
-                        context.get("session_id") or "system",
-                        AuditOp.EXTERNAL_BINDING,
-                        ids,
-                        AuditDecision(
-                            outcome=AuditOutcome.ALLOW,
-                            reason="external memory IDs bound",
-                            policy_id=decision.policy_id,
-                        ),
-                    )
-                    cur.execute(
-                        """UPDATE external_memory_bindings
-                           SET binding_audit_id = %s, updated_at = NOW()
-                           WHERE tenant_id = %s AND external_system = 'mem0'
-                             AND external_memory_id = ANY(%s)""",
-                        (audit_id, tenant_id, ids),
-                    )
-                    decision = decision.model_copy(
-                        update={
-                            "external_memory_ids": ids,
-                            "binding_audit_ids": [audit_id],
-                            "status": "completed",
-                            "failure_reason": None,
-                        }
-                    )
-                    cur.execute(
-                        """UPDATE external_governance_operations
-                           SET decision = %s, status = 'completed',
-                               failure_reason = NULL, updated_at = NOW()
-                           WHERE id = %s""",
-                        (json.dumps(decision.model_dump(mode="json")), operation["id"]),
-                    )
-                    return decision
-        except ExternalBindingConflict as exc:
-            self._mark_binding_pending(tenant_id, correlation_id, str(exc), ids)
-            raise
+                        if conflict_to_raise is not None:
+                            cur.execute("ROLLBACK TO SAVEPOINT external_binding_rows")
+                            self._set_binding_pending_in_tx(
+                                cur,
+                                operation,
+                                str(conflict_to_raise),
+                                ids,
+                            )
+                            result = decision.model_copy(
+                                update={
+                                    "external_memory_ids": ids,
+                                    "status": "binding_pending",
+                                    "failure_reason": str(conflict_to_raise),
+                                }
+                            )
+                        else:
+                            cur.execute("RELEASE SAVEPOINT external_binding_rows")
+                            audit_id = self._audit_in_tx(
+                                cur,
+                                tenant_id,
+                                context.get("agent_id") or "system",
+                                context.get("session_id") or "system",
+                                AuditOp.EXTERNAL_BINDING,
+                                ids,
+                                AuditDecision(
+                                    outcome=AuditOutcome.ALLOW,
+                                    reason="external memory IDs bound",
+                                    policy_id=decision.policy_id,
+                                ),
+                            )
+                            cur.execute(
+                                """UPDATE external_memory_bindings
+                                   SET binding_audit_id = %s, updated_at = NOW()
+                                   WHERE tenant_id = %s AND external_system = 'mem0'
+                                     AND external_memory_id = ANY(%s)""",
+                                (audit_id, tenant_id, ids),
+                            )
+                            result = decision.model_copy(
+                                update={
+                                    "external_memory_ids": ids,
+                                    "binding_audit_ids": [audit_id],
+                                    "status": "completed",
+                                    "failure_reason": None,
+                                }
+                            )
+                            cur.execute(
+                                """UPDATE external_governance_operations
+                                   SET decision = %s, status = 'completed',
+                                       failure_reason = NULL, updated_at = NOW()
+                                   WHERE id = %s""",
+                                (
+                                    json.dumps(result.model_dump(mode="json")),
+                                    operation["id"],
+                                ),
+                            )
         except ExternalGovernanceError:
             raise
         except Exception as exc:
             self._mark_binding_pending(tenant_id, correlation_id, str(exc), ids)
             raise
+        if conflict_to_raise is not None:
+            raise conflict_to_raise
+        if result is None:
+            raise ExternalOperationFailed("external binding did not produce a terminal result")
+        return result
 
     def complete_external_noop(
         self,
@@ -926,6 +960,38 @@ class MemoryStore:
                 )
                 return decision
 
+    @staticmethod
+    def _set_binding_pending_in_tx(
+        cur: psycopg2.extensions.cursor,
+        operation: dict,
+        reason: str,
+        external_memory_ids: list[str],
+    ) -> None:
+        """Persist the first ID set and pending state while the operation row is locked."""
+        known_ids = _jsonb_list(operation.get("external_memory_ids", []))
+        stored_ids = known_ids or external_memory_ids
+        decision = _jsonb_dict(operation["decision"])
+        decision.update(
+            {
+                "external_memory_ids": stored_ids,
+                "failure_reason": reason,
+                "status": "binding_pending",
+            }
+        )
+        cur.execute(
+            """UPDATE external_governance_operations
+               SET status = 'binding_pending', failure_reason = %s,
+                   external_memory_ids = %s, decision = %s, updated_at = NOW()
+               WHERE id = %s
+                 AND status IN ('evaluated', 'external_succeeded', 'binding_pending')""",
+            (
+                reason,
+                json.dumps(stored_ids),
+                json.dumps(decision),
+                operation["id"],
+            ),
+        )
+
     def _mark_binding_pending(
         self,
         tenant_id: str,
@@ -936,14 +1002,18 @@ class MemoryStore:
         with self._conn() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(
-                    """SELECT id, decision, external_memory_ids
+                    """SELECT id, status, decision, external_memory_ids
                        FROM external_governance_operations
                        WHERE tenant_id = %s AND correlation_id = %s FOR UPDATE""",
                     (tenant_id, correlation_id),
                 )
                 row = cur.fetchone()
-                decision = _jsonb_dict(row["decision"]) if row else {}
-                known_ids = _jsonb_list(row["external_memory_ids"]) if row else []
+                if row is None:
+                    return
+                if row["status"] in {"completed", "denied", "failed"}:
+                    return
+                decision = _jsonb_dict(row["decision"])
+                known_ids = _jsonb_list(row["external_memory_ids"])
                 stored_ids = known_ids or external_memory_ids or []
                 if stored_ids:
                     decision["external_memory_ids"] = stored_ids
@@ -984,14 +1054,14 @@ class MemoryStore:
                 operation = cur.fetchone()
                 if operation is None:
                     raise ExternalOperationNotFound("governance operation not found")
+                if operation["status"] in {"completed", "denied", "failed"}:
+                    return self._decision_from_operation(operation)
                 known_ids = _jsonb_list(operation.get("external_memory_ids", []))
                 if known_ids and ids and known_ids != ids:
                     raise ExternalBindingConflict(
                         "external memory IDs do not match the first known result",
                         metadata={"external_memory_ids": known_ids},
                     )
-                if operation["status"] in {"completed", "denied"}:
-                    return self._decision_from_operation(operation)
                 attempt = operation["retry_count"] + 1
                 terminal = attempt >= operation["max_attempts"]
                 stored_ids = known_ids or ids
