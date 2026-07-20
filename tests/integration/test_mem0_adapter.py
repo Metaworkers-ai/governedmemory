@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+import psycopg2
 import pytest
 import uvicorn
 from metaworkers import (
@@ -52,10 +54,17 @@ class MissingIdMem0(DeterministicMem0):
         return {"results": [{"memory": "no stable ID"}]}
 
 
+class EmptyResultMem0(DeterministicMem0):
+    def add(self, messages, **kwargs):
+        self.calls += 1
+        return {"results": []}
+
+
 @pytest.fixture()
 def live_server_url(migrated_dsn, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", migrated_dsn)
     monkeypatch.setenv("GOVERNEDMEMORY_API_KEYS", f"{TENANT}:{API_KEY}")
+    monkeypatch.setenv("GOVERNEDMEMORY_OPERATION_SECRET", "integration-operation-secret")
     from api.main import app
 
     config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning")
@@ -166,6 +175,53 @@ def test_missing_mem0_id_is_typed_and_retryable(live_server_url):
     assert exc_info.value.idempotency_key == "missing-key"
 
 
+def test_empty_mem0_result_completes_without_binding(live_server_url, migrated_dsn):
+    mem0 = EmptyResultMem0(prefix="empty")
+    governance = GovernedMemory(live_server_url, API_KEY)
+    adapter = GovernedMem0(mem0, governance, tenant_id=TENANT)
+
+    result = adapter.add(
+        "duplicate or no extracted fact",
+        user_id="customer-empty",
+        idempotency_key="empty-operation",
+    )
+
+    assert result["results"] == []
+    assert result["governance"]["status"] == "completed"
+    assert result["governance"]["external_memory_ids"] == []
+    assert result["governance"]["binding_audit_ids"]
+    assert mem0.calls == 1
+
+    replay = adapter.add(
+        "duplicate or no extracted fact",
+        user_id="customer-empty",
+        idempotency_key="empty-operation",
+    )
+    assert replay["results"] == []
+    assert replay["governance"]["idempotent_replay"] is True
+    assert replay["governance"]["original_mem0_result_available"] is False
+    assert mem0.calls == 1
+
+    with psycopg2.connect(migrated_dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT status, external_memory_ids, decision
+               FROM external_governance_operations
+               WHERE tenant_id = %s AND idempotency_key = %s""",
+            (TENANT, "empty-operation"),
+        )
+        status, external_ids, decision = cur.fetchone()
+        cur.execute(
+            """SELECT COUNT(*) FROM external_memory_bindings
+               WHERE tenant_id = %s AND operation_id = %s::uuid""",
+            (TENANT, decision["operation_id"]),
+        )
+        binding_count = cur.fetchone()[0]
+    assert status == "completed"
+    assert external_ids == []
+    assert decision["binding_audit_ids"]
+    assert binding_count == 0
+
+
 def test_concurrent_same_key_evaluation_is_idempotent(live_server_url):
     governance = GovernedMemory(live_server_url, API_KEY)
 
@@ -199,7 +255,35 @@ def test_changed_payload_with_same_key_is_a_typed_conflict(live_server_url):
         governance.evaluate_external_write(content="changed", **kwargs)
 
 
-def test_binding_pending_recovery_rejects_altered_ids(live_server_url):
+def test_changed_write_policy_with_same_key_is_a_typed_conflict(
+    live_server_url,
+    migrated_dsn,
+):
+    governance = GovernedMemory(live_server_url, API_KEY)
+    kwargs = {
+        "customer_id": "customer-policy-conflict",
+        "agent_id": "agent-policy-conflict",
+        "session_id": "session-policy-conflict",
+        "content": "same content",
+        "source": Source(type="user", ref="policy-conflict"),
+        "idempotency_key": "policy-conflict-key",
+    }
+    governance.evaluate_external_write(strict_untrusted_write=False, **kwargs)
+    with pytest.raises(IdempotencyConflictError):
+        governance.evaluate_external_write(strict_untrusted_write=True, **kwargs)
+    with psycopg2.connect(migrated_dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT context FROM external_governance_operations
+               WHERE tenant_id = %s AND idempotency_key = %s""",
+            (TENANT, "policy-conflict-key"),
+        )
+        context = cur.fetchone()[0]
+    assert "content_digest" not in context
+    assert context["content_signature"] != hashlib.sha256(b"same content").hexdigest()
+    assert context["strict_untrusted_write"] is False
+
+
+def test_binding_pending_recovery_rejects_altered_ids(live_server_url, migrated_dsn):
     governance = GovernedMemory(live_server_url, API_KEY)
     owner = governance.evaluate_external_write(
         customer_id="customer-owner",
@@ -228,6 +312,16 @@ def test_binding_pending_recovery_rejects_altered_ids(live_server_url):
         governance.retry_binding(
             correlation_id=pending["correlation_id"], external_memory_ids=["different-id"]
         )
+    with psycopg2.connect(migrated_dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT external_memory_ids, decision
+               FROM external_governance_operations
+               WHERE tenant_id = %s AND correlation_id = %s""",
+            (TENANT, pending["correlation_id"]),
+        )
+        stored_ids, decision = cur.fetchone()
+    assert stored_ids == ["occupied-id"]
+    assert decision["external_memory_ids"] == ["occupied-id"]
 
 
 def test_concurrent_quarantine_is_idempotent(live_server_url):

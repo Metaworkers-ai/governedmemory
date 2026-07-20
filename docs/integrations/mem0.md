@@ -8,6 +8,11 @@ Supported contract version: **`mem0ai==2.0.12`**. The adapter is intentionally
 limited to the OSS Python client; Mem0 Platform `MemoryClient`, async APIs, and
 automatic synchronization are not included.
 
+Before using external-memory endpoints outside the local Quickstart, configure
+`GOVERNEDMEMORY_OPERATION_SECRET` on the API with a stable, secret value. It
+keys tenant-scoped idempotency signatures; changing it invalidates comparisons
+for existing in-flight operation keys.
+
 ## Install
 
 Start GovernedMemory with the [Quickstart](../../README.md#quickstart), then
@@ -113,12 +118,22 @@ memory.retry_binding(
 )
 ```
 
+Mem0 may legitimately return `{"results": []}` when no fact is extracted or a
+duplicate is skipped. The adapter treats this as a successful governed no-op:
+it completes and audits the operation without creating an external binding.
+
+Replaying a completed idempotency key never calls `mem0.add()` again.
+GovernedMemory deliberately does not store Mem0's original result payload, so
+the replay envelope contains `results: []`,
+`governance.idempotent_replay=true`, and
+`governance.original_mem0_result_available=false`.
+
 ## Troubleshooting
 
 - **API connection refused:** run the Quickstart and verify `/healthz`.
 - **401/tenant errors:** use the API key mapped to the configured tenant.
-- **No Mem0 IDs:** the wrapped Mem0 version must return result items with stable
-  `id` fields; writes without IDs cannot be safely bound.
+- **No Mem0 IDs:** non-empty result items must contain stable `id` fields.
+  A valid empty `results` list is completed as an audited no-op.
 - **Untracked search results:** use `strict` for fail-closed retrieval or keep
   `compatible` while migrating existing Mem0 records.
 - **Binding pending:** retry using the same correlation ID and returned Mem0 IDs;

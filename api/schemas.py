@@ -86,6 +86,10 @@ class ExternalBindingBody(BaseModel):
     external_memory_ids: list[str]
 
 
+class ExternalNoopCompletionBody(BaseModel):
+    correlation_id: str
+
+
 class ExternalFailureBody(BaseModel):
     correlation_id: str
     reason: str

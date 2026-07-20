@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import pytest
-from metaworkers import ExternalContractError, GovernanceDenied, Source
+from metaworkers import (
+    ExternalContractError,
+    GovernanceDenied,
+    IdempotencyConflictError,
+    Source,
+)
 from metaworkers.adapters.mem0 import GovernedMem0
 
 
@@ -39,7 +44,11 @@ class FakeGovernance:
             "storage": self.storage,
             "retrieval": "allow",
             "taint": "trusted",
+            "policy_id": "default",
             "status": "evaluated",
+            "evaluation_audit_id": "audit-evaluation",
+            "external_memory_ids": [],
+            "binding_audit_ids": [],
         }
 
     def bind_external_memories(self, **kwargs):
@@ -50,9 +59,25 @@ class FakeGovernance:
             "storage": "allow",
             "retrieval": "allow",
             "taint": "trusted",
+            "policy_id": "default",
             "status": "completed",
+            "evaluation_audit_id": "audit-evaluation",
             "external_memory_ids": kwargs["external_memory_ids"],
             "binding_audit_ids": ["audit-bind"],
+        }
+
+    def complete_external_noop(self, **kwargs):
+        return {
+            "operation_id": "op-1",
+            "correlation_id": kwargs["correlation_id"],
+            "storage": "allow",
+            "retrieval": "allow",
+            "taint": "trusted",
+            "policy_id": "default",
+            "status": "completed",
+            "evaluation_audit_id": "audit-evaluation",
+            "external_memory_ids": [],
+            "binding_audit_ids": ["audit-noop"],
         }
 
     def evaluate_external_candidates(self, **kwargs):
@@ -131,6 +156,26 @@ def test_add_preserves_multiple_mem0_results_and_ids():
     assert governance.bound[0]["external_memory_ids"] == ["m-1", "m-2"]
 
 
+def test_empty_mem0_result_completes_as_successful_noop():
+    class EmptyMem0(FakeMem0):
+        def add(self, messages, **kwargs):
+            self.add_calls.append((messages, kwargs))
+            return {"results": []}
+
+    mem0 = EmptyMem0()
+    governance = FakeGovernance()
+    result = GovernedMem0(mem0, governance, tenant_id="tenant-a").add(
+        "duplicate or no extracted fact",
+        user_id="user-a",
+        idempotency_key="empty-key",
+    )
+
+    assert result["results"] == []
+    assert result["governance"]["status"] == "completed"
+    assert result["governance"]["binding_audit_ids"] == ["audit-noop"]
+    assert governance.bound == []
+
+
 def test_denied_write_never_calls_mem0():
     mem0 = FakeMem0()
     adapter = GovernedMem0(mem0, FakeGovernance(storage="deny"), tenant_id="tenant-a")
@@ -177,3 +222,82 @@ def test_search_rejects_mismatched_governance_decisions(mode):
         GovernedMem0(FakeMem0(), BrokenGovernance(), tenant_id="tenant-a").search(
             "safe", user_id="user-a"
         )
+
+
+def test_typed_governance_errors_propagate_from_evaluation():
+    class ConflictingGovernance(FakeGovernance):
+        def evaluate_external_write(self, **kwargs):
+            raise IdempotencyConflictError("same key, different request")
+
+    adapter = GovernedMem0(FakeMem0(), ConflictingGovernance(), tenant_id="tenant-a")
+    with pytest.raises(IdempotencyConflictError):
+        adapter.add("changed", user_id="user-a", idempotency_key="same-key")
+
+
+@pytest.mark.parametrize(
+    ("boundary", "missing_field"),
+    [
+        ("evaluation", "policy_id"),
+        ("binding", "binding_audit_ids"),
+        ("candidate", "reason"),
+    ],
+)
+def test_malformed_governance_responses_raise_typed_contract_error(
+    boundary,
+    missing_field,
+):
+    class MalformedGovernance(FakeGovernance):
+        def evaluate_external_write(self, **kwargs):
+            response = super().evaluate_external_write(**kwargs)
+            if boundary == "evaluation":
+                response.pop(missing_field)
+            return response
+
+        def bind_external_memories(self, **kwargs):
+            response = super().bind_external_memories(**kwargs)
+            if boundary == "binding":
+                response.pop(missing_field)
+            return response
+
+        def evaluate_external_candidates(self, **kwargs):
+            response = super().evaluate_external_candidates(**kwargs)
+            if boundary == "candidate":
+                response["decisions"][0].pop(missing_field)
+            return response
+
+    adapter = GovernedMem0(FakeMem0(), MalformedGovernance(), tenant_id="tenant-a")
+    with pytest.raises(ExternalContractError) as exc_info:
+        if boundary == "candidate":
+            adapter.search("safe", user_id="user-a")
+        else:
+            adapter.add("safe", user_id="user-a", idempotency_key=f"malformed-{boundary}")
+    assert missing_field in exc_info.value.detail
+
+
+@pytest.mark.parametrize("boundary", ["evaluation", "binding", "candidate"])
+def test_invalid_governance_response_values_raise_typed_contract_error(boundary):
+    class InvalidGovernance(FakeGovernance):
+        def evaluate_external_write(self, **kwargs):
+            response = super().evaluate_external_write(**kwargs)
+            if boundary == "evaluation":
+                response["storage"] = "maybe"
+            return response
+
+        def bind_external_memories(self, **kwargs):
+            response = super().bind_external_memories(**kwargs)
+            if boundary == "binding":
+                response["external_memory_ids"] = ["different-id"]
+            return response
+
+        def evaluate_external_candidates(self, **kwargs):
+            response = super().evaluate_external_candidates(**kwargs)
+            if boundary == "candidate":
+                response["decisions"][0]["decision"] = "maybe"
+            return response
+
+    adapter = GovernedMem0(FakeMem0(), InvalidGovernance(), tenant_id="tenant-a")
+    with pytest.raises(ExternalContractError):
+        if boundary == "candidate":
+            adapter.search("safe", user_id="user-a")
+        else:
+            adapter.add("safe", user_id="user-a", idempotency_key=f"invalid-{boundary}")

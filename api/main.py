@@ -35,6 +35,7 @@ from api.schemas import (
     ExternalBindingBody,
     ExternalCandidateEvaluationBody,
     ExternalFailureBody,
+    ExternalNoopCompletionBody,
     ExternalQuarantineBody,
     ExternalWriteEvaluationBody,
     ProvenanceResponse,
@@ -151,6 +152,18 @@ def retry_external_binding(
 ):
     try:
         return store.retry_binding(tenant_id, body.correlation_id, body.external_memory_ids)
+    except (ExternalGovernanceError, ValueError) as exc:
+        raise _external_error(exc) from exc
+
+
+@app.post("/v1/external-memories/complete-noop")
+def complete_external_noop(
+    body: ExternalNoopCompletionBody,
+    tenant_id: str = Depends(require_tenant),
+    store: MemoryStore = Depends(get_store),
+):
+    try:
+        return store.complete_external_noop(tenant_id, body.correlation_id)
     except (ExternalGovernanceError, ValueError) as exc:
         raise _external_error(exc) from exc
 

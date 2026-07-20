@@ -333,6 +333,13 @@ class GovernedMemory:
             },
         )
 
+    def complete_external_noop(self, *, correlation_id: str) -> dict:
+        return self._request(
+            "POST",
+            "/v1/external-memories/complete-noop",
+            json_body={"correlation_id": correlation_id},
+        )
+
     def evaluate_external_candidates(
         self,
         *,

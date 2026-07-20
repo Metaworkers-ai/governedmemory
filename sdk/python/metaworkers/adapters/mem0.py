@@ -18,8 +18,21 @@ from ..client import (
     ExternalOperationFailed,
     GovernanceDenied,
     GovernedMemory,
+    GovernedMemoryError,
     Source,
 )
+
+_STORAGE_DECISIONS = {"allow", "allow_quarantined", "deny"}
+_RETRIEVAL_DECISIONS = {"allow", "exclude", "purpose_restricted"}
+_TAINT_VALUES = {"trusted", "untrusted", "quarantined"}
+_OPERATION_STATUSES = {
+    "evaluated",
+    "denied",
+    "external_succeeded",
+    "binding_pending",
+    "completed",
+    "failed",
+}
 
 
 class GovernedMem0:
@@ -107,6 +120,163 @@ class GovernedMem0:
             return enriched
         return {"results": result, "governance": governance}
 
+    @staticmethod
+    def _contract_error(
+        detail: str,
+        response: Any,
+        *,
+        fallback_correlation_id: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> ExternalContractError:
+        correlation_id = fallback_correlation_id
+        if isinstance(response, Mapping) and isinstance(response.get("correlation_id"), str):
+            correlation_id = response["correlation_id"]
+        return ExternalContractError(
+            detail,
+            correlation_id=correlation_id,
+            idempotency_key=idempotency_key,
+        )
+
+    @classmethod
+    def _validate_governance_decision(
+        cls,
+        response: Any,
+        *,
+        stage: str,
+        fallback_correlation_id: str | None,
+        idempotency_key: str,
+        expected_external_ids: list[str] | None = None,
+    ) -> dict:
+        if not isinstance(response, Mapping):
+            raise cls._contract_error(
+                f"GovernedMemory {stage} response must be a mapping",
+                response,
+                fallback_correlation_id=fallback_correlation_id,
+                idempotency_key=idempotency_key,
+            )
+        decision = dict(response)
+        required_strings = {
+            "operation_id",
+            "correlation_id",
+            "storage",
+            "retrieval",
+            "taint",
+            "policy_id",
+            "status",
+            "evaluation_audit_id",
+        }
+        missing = [
+            field
+            for field in sorted(required_strings)
+            if not isinstance(decision.get(field), str) or not decision[field]
+        ]
+        if missing:
+            raise cls._contract_error(
+                f"GovernedMemory {stage} response has missing or invalid fields: "
+                f"{', '.join(missing)}",
+                decision,
+                fallback_correlation_id=fallback_correlation_id,
+                idempotency_key=idempotency_key,
+            )
+        enum_fields = {
+            "storage": _STORAGE_DECISIONS,
+            "retrieval": _RETRIEVAL_DECISIONS,
+            "taint": _TAINT_VALUES,
+            "status": _OPERATION_STATUSES,
+        }
+        invalid = [
+            field for field, allowed in enum_fields.items() if decision[field] not in allowed
+        ]
+        if invalid:
+            raise cls._contract_error(
+                f"GovernedMemory {stage} response has invalid values for: {', '.join(invalid)}",
+                decision,
+                fallback_correlation_id=fallback_correlation_id,
+                idempotency_key=idempotency_key,
+            )
+        for field in ("external_memory_ids", "binding_audit_ids"):
+            value = decision.get(field)
+            if not isinstance(value, list) or any(
+                not isinstance(item, str) or not item for item in value
+            ):
+                raise cls._contract_error(
+                    f"GovernedMemory {stage} response field {field!r} must be a list of IDs",
+                    decision,
+                    fallback_correlation_id=fallback_correlation_id,
+                    idempotency_key=idempotency_key,
+                )
+        if expected_external_ids is not None and decision["external_memory_ids"] != (
+            expected_external_ids
+        ):
+            raise cls._contract_error(
+                f"GovernedMemory {stage} response IDs do not match the Mem0 result",
+                decision,
+                fallback_correlation_id=fallback_correlation_id,
+                idempotency_key=idempotency_key,
+            )
+        return decision
+
+    @classmethod
+    def _validate_candidate_evaluation(
+        cls,
+        response: Any,
+        *,
+        candidate_ids: list[str | None],
+    ) -> dict:
+        if not isinstance(response, Mapping):
+            raise cls._contract_error(
+                "GovernedMemory candidate response must be a mapping",
+                response,
+            )
+        evaluation = dict(response)
+        for field in ("operation_id", "correlation_id", "audit_id"):
+            if not isinstance(evaluation.get(field), str) or not evaluation[field]:
+                raise cls._contract_error(
+                    f"GovernedMemory candidate response has missing or invalid field: {field}",
+                    evaluation,
+                )
+        decisions = evaluation.get("decisions")
+        if not isinstance(decisions, list):
+            raise cls._contract_error(
+                "GovernedMemory candidate response field 'decisions' must be a list",
+                evaluation,
+            )
+        if len(decisions) != len(candidate_ids):
+            raise cls._contract_error(
+                f"GovernedMemory returned {len(decisions)} decisions for "
+                f"{len(candidate_ids)} Mem0 results",
+                evaluation,
+            )
+        validated: list[dict] = []
+        for index, (candidate_id, item) in enumerate(zip(candidate_ids, decisions, strict=True)):
+            if not isinstance(item, Mapping):
+                raise cls._contract_error(
+                    f"candidate decision {index} must be a mapping",
+                    evaluation,
+                )
+            decision = dict(item)
+            if decision.get("external_memory_id") != candidate_id:
+                raise cls._contract_error(
+                    f"candidate decision {index} does not match Mem0 result order or ID",
+                    evaluation,
+                )
+            invalid_fields = []
+            if not isinstance(decision.get("status"), str) or not decision["status"]:
+                invalid_fields.append("status")
+            if decision.get("decision") not in {"allow", "exclude"}:
+                invalid_fields.append("decision")
+            if not isinstance(decision.get("reason"), str) or not decision["reason"]:
+                invalid_fields.append("reason")
+            if invalid_fields:
+                raise cls._contract_error(
+                    f"candidate decision {index} has missing or invalid governance fields: "
+                    f"{', '.join(invalid_fields)}",
+                    evaluation,
+                )
+            validated.append(decision)
+        evaluation["decisions"] = validated
+        return evaluation
+
     def _context(
         self,
         *,
@@ -175,6 +345,8 @@ class GovernedMem0:
                 strict_untrusted_write=strict,
                 correlation_id=correlation_id,
             )
+        except GovernedMemoryError:
+            raise
         except Exception as exc:
             raise ExternalOperationFailed(
                 {
@@ -184,23 +356,34 @@ class GovernedMem0:
                     "failure_reason": str(exc),
                 }
             ) from exc
-        if evaluation.get("storage") == "deny":
+        evaluation = self._validate_governance_decision(
+            evaluation,
+            stage="write-evaluation",
+            fallback_correlation_id=correlation_id,
+            idempotency_key=key,
+        )
+        if evaluation["storage"] == "deny":
             raise GovernanceDenied(evaluation)
-        if evaluation.get("status") == "completed":
+        if evaluation["status"] == "completed":
             # The caller is replaying an already completed operation.  Do not
             # call Mem0.add() again; the original Mem0 result is intentionally
             # not duplicated in GovernedMemory.
             return {
                 "results": [],
-                "governance": {**evaluation, "idempotency_key": key, "idempotent_replay": True},
+                "governance": {
+                    **evaluation,
+                    "idempotency_key": key,
+                    "idempotent_replay": True,
+                    "original_mem0_result_available": False,
+                },
             }
-        if evaluation.get("status") == "binding_pending":
+        if evaluation["status"] == "binding_pending":
             raise ExternalBindingPending(
                 evaluation["correlation_id"],
                 key,
-                evaluation.get("external_memory_ids", []),
+                evaluation["external_memory_ids"],
             )
-        if evaluation.get("status") == "failed":
+        if evaluation["status"] == "failed":
             raise ExternalOperationFailed(
                 {
                     "message": evaluation.get("failure_reason") or "external operation failed",
@@ -247,11 +430,13 @@ class GovernedMem0:
 
         try:
             items, _ = self._result_items(result)
-            external_ids = [
-                external_id
-                for external_id in self._external_ids(items, require_ids=True)
-                if external_id
-            ]
+            external_ids = list(
+                dict.fromkeys(
+                    external_id
+                    for external_id in self._external_ids(items, require_ids=True)
+                    if external_id
+                )
+            )
         except ExternalContractError as exc:
             try:
                 self.governance.mark_external_failure(
@@ -264,12 +449,35 @@ class GovernedMem0:
             exc.idempotency_key = key
             raise
         try:
-            bound = self.governance.bind_external_memories(
-                correlation_id=evaluation["correlation_id"],
-                external_memory_ids=external_ids,
-            )
+            if external_ids:
+                bound = self.governance.bind_external_memories(
+                    correlation_id=evaluation["correlation_id"],
+                    external_memory_ids=external_ids,
+                )
+                binding_stage = "binding"
+            else:
+                bound = self.governance.complete_external_noop(
+                    correlation_id=evaluation["correlation_id"],
+                )
+                binding_stage = "no-op completion"
+        except GovernedMemoryError:
+            raise
         except Exception as exc:
             raise ExternalBindingPending(evaluation["correlation_id"], key, external_ids) from exc
+        bound = self._validate_governance_decision(
+            bound,
+            stage=binding_stage,
+            fallback_correlation_id=evaluation["correlation_id"],
+            idempotency_key=key,
+            expected_external_ids=external_ids,
+        )
+        if bound["status"] != "completed" or not bound["binding_audit_ids"]:
+            raise self._contract_error(
+                f"GovernedMemory {binding_stage} response did not complete the operation",
+                bound,
+                fallback_correlation_id=evaluation["correlation_id"],
+                idempotency_key=key,
+            )
         return self._with_governance(
             result,
             {
@@ -307,32 +515,35 @@ class GovernedMem0:
         )
         try:
             items, mapping_result = self._result_items(result)
-        except ExternalContractError as exc:
-            raise ExternalContractError(str(exc)) from exc
+        except ExternalContractError:
+            raise
         resolved_agent = agent_id or self.agent_id or "mem0-agent"
         session_id = run_id or "mem0-search"
-        candidates = [{"external_memory_id": self._external_id(item)} for item in items]
-        evaluation = self.governance.evaluate_external_candidates(
-            candidates=candidates,
-            customer_id=user_id,
-            agent_id=resolved_agent,
-            session_id=session_id,
-            purpose=purpose,
-            compatibility_mode=self.compatibility_mode,
-        )
-        decisions = evaluation.get("decisions", [])
-        if len(decisions) != len(items):
-            raise ExternalContractError(
-                f"GovernedMemory returned {len(decisions)} decisions for {len(items)} Mem0 results"
-            )
         candidate_ids = self._external_ids(items, require_ids=False)
-        for index, (candidate_id, decision) in enumerate(
-            zip(candidate_ids, decisions, strict=True)
-        ):
-            if decision.get("external_memory_id") != candidate_id:
-                raise ExternalContractError(
-                    f"candidate decision {index} does not match Mem0 result order or ID"
-                )
+        candidates = [{"external_memory_id": external_id} for external_id in candidate_ids]
+        try:
+            evaluation = self.governance.evaluate_external_candidates(
+                candidates=candidates,
+                customer_id=user_id,
+                agent_id=resolved_agent,
+                session_id=session_id,
+                purpose=purpose,
+                compatibility_mode=self.compatibility_mode,
+            )
+        except GovernedMemoryError:
+            raise
+        except Exception as exc:
+            raise ExternalOperationFailed(
+                {
+                    "message": "GovernedMemory candidate evaluation failed",
+                    "failure_reason": str(exc),
+                }
+            ) from exc
+        evaluation = self._validate_candidate_evaluation(
+            evaluation,
+            candidate_ids=candidate_ids,
+        )
+        decisions = evaluation["decisions"]
         kept: list[Any] = []
         annotated: list[dict] = list(decisions)
         for item, decision in zip(items, decisions, strict=True):
@@ -362,8 +573,8 @@ class GovernedMem0:
             output,
             {
                 "operation_id": evaluation.get("operation_id"),
-                "correlation_id": evaluation.get("correlation_id"),
-                "audit_id": evaluation.get("audit_id"),
+                "correlation_id": evaluation["correlation_id"],
+                "audit_id": evaluation["audit_id"],
                 "compatibility_mode": self.compatibility_mode,
                 "decisions": annotated,
             },

@@ -59,6 +59,15 @@ def test_retry_binding_uses_recovery_route(mock_urlopen):
 
 
 @patch("urllib.request.urlopen")
+def test_complete_noop_uses_completion_route(mock_urlopen):
+    _response(mock_urlopen, {"status": "completed", "external_memory_ids": []})
+    client = GovernedMemory("http://localhost:8000", "key")
+    client.complete_external_noop(correlation_id="c1")
+    request = mock_urlopen.call_args[0][0]
+    assert request.full_url.endswith("/v1/external-memories/complete-noop")
+
+
+@patch("urllib.request.urlopen")
 def test_tenant_identity_check(mock_urlopen):
     _response(mock_urlopen, {"tenant_id": "tenant-a"})
     client = GovernedMemory("http://localhost:8000", "key")

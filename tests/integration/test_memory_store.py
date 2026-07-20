@@ -118,9 +118,67 @@ def _req(
 
 class TestMigrations:
     def test_init_db_is_idempotent(self, postgres_dsn):
-        """Calling init_db twice must not raise — all statements use IF NOT EXISTS."""
-        init_db(postgres_dsn)  # already run by fixture; must be a no-op
+        """Repeated startup keeps an already-current audit constraint intact."""
+        import psycopg2
+
+        init_db(postgres_dsn)
+        with psycopg2.connect(postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                """SELECT oid FROM pg_constraint
+                   WHERE conrelid = 'audit'::regclass
+                     AND conname = 'audit_op_check'"""
+            )
+            original_constraint_oid = cur.fetchone()[0]
+        init_db(postgres_dsn)  # second call must be a no-op
         init_db(postgres_dsn)  # third call — still fine
+        with psycopg2.connect(postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                """SELECT oid FROM pg_constraint
+                   WHERE conrelid = 'audit'::regclass
+                     AND conname = 'audit_op_check'"""
+            )
+            assert cur.fetchone()[0] == original_constraint_oid
+
+    def test_init_db_upgrades_only_a_stale_audit_constraint(self, postgres_dsn):
+        import psycopg2
+
+        init_db(postgres_dsn)
+        with psycopg2.connect(postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute("ALTER TABLE audit DROP CONSTRAINT audit_op_check")
+            cur.execute(
+                """ALTER TABLE audit ADD CONSTRAINT audit_op_check CHECK (op IN (
+                       'write', 'retrieve', 'quarantine', 'purge', 'policy_decision'
+                   ))"""
+            )
+            cur.execute(
+                """SELECT oid FROM pg_constraint
+                   WHERE conrelid = 'audit'::regclass
+                     AND conname = 'audit_op_check'"""
+            )
+            stale_constraint_oid = cur.fetchone()[0]
+
+        init_db(postgres_dsn)
+        with psycopg2.connect(postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                """SELECT oid, pg_get_constraintdef(oid)
+                   FROM pg_constraint
+                   WHERE conrelid = 'audit'::regclass
+                     AND conname = 'audit_op_check'"""
+            )
+            upgraded_constraint_oid, definition = cur.fetchone()
+        assert upgraded_constraint_oid != stale_constraint_oid
+        assert "external_evaluation" in definition
+        assert "external_binding" in definition
+        assert "external_quarantine" in definition
+
+        init_db(postgres_dsn)
+        with psycopg2.connect(postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                """SELECT oid FROM pg_constraint
+                   WHERE conrelid = 'audit'::regclass
+                     AND conname = 'audit_op_check'"""
+            )
+            assert cur.fetchone()[0] == upgraded_constraint_oid
 
     def test_memory_table_exists(self, postgres_dsn):
         import psycopg2
