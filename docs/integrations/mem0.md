@@ -1,0 +1,123 @@
+# GovernedMemory + Mem0 OSS
+
+GovernedMemory adds trust, policy, quarantine, provenance, and audit around an
+existing synchronous Mem0 OSS `Memory` instance. Mem0 remains the system of
+record for memory content, embeddings, native IDs, and semantic search.
+
+Supported contract version: **`mem0ai==2.0.12`**. The adapter is intentionally
+limited to the OSS Python client; Mem0 Platform `MemoryClient`, async APIs, and
+automatic synchronization are not included.
+
+## Install
+
+Start GovernedMemory with the [Quickstart](../../README.md#quickstart), then
+install the SDK and its pinned Mem0 compatibility extra:
+
+```bash
+pip install -e sdk/python[mem0]
+```
+
+## Before and after
+
+Existing Mem0 code can continue to use `Memory` directly:
+
+```python
+from mem0 import Memory
+
+memory = Memory()
+memory.add("Customer prefers email", user_id="customer-1")
+```
+
+Wrap the same object when the write and search need governance:
+
+```python
+from mem0 import Memory
+from metaworkers import GovernedMemory, GovernedMem0, Source
+
+memory = GovernedMem0(
+    Memory(),
+    GovernedMemory("http://localhost:8000", "demo-key"),
+    tenant_id="solstice-cloud",
+)
+result = memory.add(
+    "Customer prefers email", user_id="customer-1",
+    source=Source(type="user", ref="crm:123"),
+)
+results = memory.search("contact preference", user_id="customer-1")
+```
+
+The adapter calls Mem0 for storage and semantic retrieval. GovernedMemory
+evaluates proposed writes, binds the returned Mem0 IDs, and batch-evaluates
+search candidates. It never performs a second embedding or semantic search.
+
+## Context mapping
+
+| Mem0 context | GovernedMemory context |
+| --- | --- |
+| `user_id` | `customer_id` |
+| `agent_id` | `agent_id` |
+| `run_id` | `session_id` |
+| `purpose=` | purpose policy context |
+| `Source(...)` | provenance/source type |
+| Mem0 result `id` | external memory binding ID |
+
+Pass an explicit `idempotency_key` for writes that may be retried. If omitted,
+the adapter generates one and returns it in governance metadata.
+
+## Governance behavior
+
+- Trusted content is stored in Mem0 and eligible for governed retrieval.
+- Untrusted content may be stored in Mem0 but is excluded from governed retrieval.
+- Quarantined content remains in Mem0 but is excluded from governed retrieval.
+- Explicit policy denial or severe injection does not call `mem0.add()`.
+- `untrusted_write_mode="deny"` enables strict rejection of all untrusted writes.
+
+Every result includes a `governance` section with the decision, taint, policy,
+correlation ID, external IDs, and stable audit IDs.
+
+## Compatibility modes
+
+- `compatible` (default): preserve existing Mem0 behavior for untracked records,
+  but mark them `governance.status="untracked"`.
+- `observe`: return untracked records with explicit observations and audit data.
+- `strict`: exclude all untracked records.
+
+Known untrusted and quarantined records are excluded in every mode. A
+GovernedMemory outage fails closed by default; the adapter never silently
+bypasses governance because the API is unavailable.
+
+## Quarantine and recovery
+
+```python
+memory.quarantine("mem0-native-id", reason="prompt injection review")
+metadata = memory.get_governance("mem0-native-id")
+```
+
+Quarantine changes GovernedMemory state only. It does not delete the Mem0
+record. If Mem0 succeeds but binding finalization fails, `ExternalBindingPending`
+contains the correlation ID, idempotency key, and Mem0 IDs:
+
+```python
+memory.retry_binding(
+    correlation_id=error.correlation_id,
+    external_memory_ids=error.external_memory_ids,
+)
+```
+
+## Troubleshooting
+
+- **API connection refused:** run the Quickstart and verify `/healthz`.
+- **401/tenant errors:** use the API key mapped to the configured tenant.
+- **No Mem0 IDs:** the wrapped Mem0 version must return result items with stable
+  `id` fields; writes without IDs cannot be safely bound.
+- **Untracked search results:** use `strict` for fail-closed retrieval or keep
+  `compatible` while migrating existing Mem0 records.
+- **Binding pending:** retry using the same correlation ID and returned Mem0 IDs;
+  do not call `mem0.add()` again.
+
+## Non-goals
+
+This first adapter does not replace Mem0, add another vector store, create an
+embedding pipeline, synchronize all legacy memories, delete Mem0 records
+automatically, support Platform `MemoryClient`, support async APIs, or add a
+durable worker/outbox.

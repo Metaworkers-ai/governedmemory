@@ -46,3 +46,11 @@ Covers every route the server (E7) exposes: `write`, `retrieve`, `quarantine`, `
 ## Errors
 
 Any non-2xx response raises `metaworkers.GovernedMemoryError`, with `.status_code` and `.detail` from the server's response. Connection-level failures (server unreachable, timeout) raise the underlying `urllib.error.URLError` instead.
+
+## Mem0 adapter
+
+For the supported synchronous Mem0 OSS client, see
+[`docs/integrations/mem0.md`](../../docs/integrations/mem0.md). The adapter
+keeps Mem0 as the memory system of record and adds GovernedMemory evaluation,
+external-ID bindings, quarantine, and audit metadata around the existing
+`add()` and `search()` calls.
