@@ -32,12 +32,17 @@ from api.auth import require_tenant
 from api.deps import get_store
 from api.schemas import (
     CascadePurgePlanResponse,
+    ExternalBindingBody,
+    ExternalCandidateEvaluationBody,
+    ExternalQuarantineBody,
+    ExternalWriteEvaluationBody,
     ProvenanceResponse,
     QuarantineBody,
     RetrieveBody,
     SuccessResponse,
     WriteBody,
 )
+from core.governance import GovernanceEvaluationRequest
 from core.memory_store import MemoryStore, NullEmbeddingProvider, init_db
 from core.models import MemoryRecord, WriteRequest
 
@@ -71,6 +76,12 @@ def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
+def _external_error(exc: ValueError) -> HTTPException:
+    detail = str(exc)
+    status_code = status.HTTP_409_CONFLICT if "idempotency" in detail or "already bound" in detail else status.HTTP_422_UNPROCESSABLE_ENTITY
+    return HTTPException(status_code=status_code, detail=detail)
+
+
 @app.post("/v1/memory", response_model=MemoryRecord, status_code=status.HTTP_201_CREATED)
 def write_memory(
     body: WriteBody,
@@ -79,6 +90,107 @@ def write_memory(
 ) -> MemoryRecord:
     req = WriteRequest(tenant_id=tenant_id, **body.model_dump())
     return store.write(req)
+
+
+@app.post("/v1/external-memories/evaluate-write")
+def evaluate_external_write(
+    body: ExternalWriteEvaluationBody,
+    tenant_id: str = Depends(require_tenant),
+    store: MemoryStore = Depends(get_store),
+):
+    request = GovernanceEvaluationRequest(
+        operation="external_add",
+        tenant_id=tenant_id,
+        customer_id=body.customer_id,
+        agent_id=body.agent_id,
+        session_id=body.session_id,
+        purpose=body.purpose,
+        provenance=body.provenance,
+        source_type=body.provenance.source_type,
+        content=body.content,
+        external_system="mem0",
+        idempotency_key=body.idempotency_key,
+    )
+    try:
+        return store.evaluate_external_write(
+            request,
+            idempotency_key=body.idempotency_key,
+            strict_untrusted_write=body.strict_untrusted_write,
+            correlation_id=body.correlation_id,
+        )
+    except ValueError as exc:
+        raise _external_error(exc) from exc
+
+
+@app.post("/v1/external-memories/bind")
+def bind_external_memories(
+    body: ExternalBindingBody,
+    tenant_id: str = Depends(require_tenant),
+    store: MemoryStore = Depends(get_store),
+):
+    try:
+        return store.bind_external_memories(
+            tenant_id, body.correlation_id, body.external_memory_ids
+        )
+    except ValueError as exc:
+        raise _external_error(exc) from exc
+
+
+@app.post("/v1/external-memories/retry-binding")
+def retry_external_binding(
+    body: ExternalBindingBody,
+    tenant_id: str = Depends(require_tenant),
+    store: MemoryStore = Depends(get_store),
+):
+    try:
+        return store.retry_binding(tenant_id, body.correlation_id, body.external_memory_ids)
+    except ValueError as exc:
+        raise _external_error(exc) from exc
+
+
+@app.post("/v1/external-memories/evaluate-candidates")
+def evaluate_external_candidates(
+    body: ExternalCandidateEvaluationBody,
+    tenant_id: str = Depends(require_tenant),
+    store: MemoryStore = Depends(get_store),
+):
+    try:
+        return store.evaluate_external_candidates(
+            tenant_id,
+            body.candidates,
+            agent_id=body.agent_id,
+            session_id=body.session_id,
+            purpose=body.purpose,
+            compatibility_mode=body.compatibility_mode,
+            idempotency_key=body.idempotency_key,
+        )
+    except ValueError as exc:
+        raise _external_error(exc) from exc
+
+
+@app.get("/v1/external-memories/{external_memory_id}/governance")
+def get_external_governance(
+    external_memory_id: str,
+    tenant_id: str = Depends(require_tenant),
+    store: MemoryStore = Depends(get_store),
+):
+    result = store.get_external_governance(tenant_id, external_memory_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="external memory binding not found")
+    return result
+
+
+@app.post("/v1/external-memories/{external_memory_id}/quarantine")
+def quarantine_external_memory(
+    external_memory_id: str,
+    body: ExternalQuarantineBody,
+    tenant_id: str = Depends(require_tenant),
+    store: MemoryStore = Depends(get_store),
+):
+    result = store.quarantine_external_memory(tenant_id, external_memory_id, body.reason)
+    if result is None:
+        raise HTTPException(status_code=404, detail="external memory binding not found")
+    return result
 
 
 @app.post("/v1/retrieve", response_model=list[MemoryRecord])

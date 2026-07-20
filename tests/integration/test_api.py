@@ -94,6 +94,7 @@ class TestWriteAndRetrieve:
         record = resp.json()
         assert record["tenant_id"] == TENANT_A
         assert record["customer_id"] == "cust-1"
+        assert record["audit_id"]
 
     def test_write_ignores_client_supplied_tenant_id(self, client):
         """WriteBody has no tenant_id field at all, so even if a client tries

@@ -39,6 +39,24 @@ class GovernedMemoryError(Exception):
         super().__init__(f"HTTP {status_code}: {detail}")
 
 
+class GovernanceDenied(GovernedMemoryError):
+    """Raised by an adapter when governance denies external storage."""
+
+    def __init__(self, decision: dict):
+        self.decision = decision
+        super().__init__(403, decision.get("taint_reason") or "governance denied storage")
+
+
+class ExternalBindingPending(GovernedMemoryError):
+    """Mem0 has IDs, but the governance binding still needs recovery."""
+
+    def __init__(self, correlation_id: str, idempotency_key: str, external_memory_ids: list[str]):
+        self.correlation_id = correlation_id
+        self.idempotency_key = idempotency_key
+        self.external_memory_ids = external_memory_ids
+        super().__init__(409, "external memory binding is pending")
+
+
 @dataclass
 class Source:
     """Where a memory came from. Maps to core.models.Provenance server-side
@@ -158,6 +176,97 @@ class GovernedMemory:
             "POST", "/v1/quarantine", json_body={"memory_id": memory_id, "reason": reason}
         )
         return resp["success"]
+
+    def evaluate_external_write(
+        self,
+        *,
+        customer_id: str,
+        agent_id: str,
+        session_id: str,
+        content: str,
+        source: Source,
+        idempotency_key: str,
+        purpose: str | None = None,
+        strict_untrusted_write: bool = False,
+        correlation_id: str | None = None,
+    ) -> dict:
+        """Evaluate a Mem0 write without storing a duplicate memory."""
+        return self._request(
+            "POST",
+            "/v1/external-memories/evaluate-write",
+            json_body={
+                "customer_id": customer_id,
+                "agent_id": agent_id,
+                "session_id": session_id,
+                "content": content,
+                "provenance": {
+                    "source_type": source.type,
+                    "source_ref": source.ref,
+                    "confidence": source.confidence,
+                },
+                "purpose": purpose,
+                "idempotency_key": idempotency_key,
+                "correlation_id": correlation_id,
+                "strict_untrusted_write": strict_untrusted_write,
+            },
+        )
+
+    def bind_external_memories(
+        self, *, correlation_id: str, external_memory_ids: list[str]
+    ) -> dict:
+        return self._request(
+            "POST",
+            "/v1/external-memories/bind",
+            json_body={
+                "correlation_id": correlation_id,
+                "external_memory_ids": external_memory_ids,
+            },
+        )
+
+    def retry_binding(self, *, correlation_id: str, external_memory_ids: list[str]) -> dict:
+        return self._request(
+            "POST",
+            "/v1/external-memories/retry-binding",
+            json_body={
+                "correlation_id": correlation_id,
+                "external_memory_ids": external_memory_ids,
+            },
+        )
+
+    def evaluate_external_candidates(
+        self,
+        *,
+        candidates: list[dict],
+        agent_id: str,
+        session_id: str,
+        purpose: str | None = None,
+        compatibility_mode: str = "compatible",
+        idempotency_key: str | None = None,
+    ) -> dict:
+        return self._request(
+            "POST",
+            "/v1/external-memories/evaluate-candidates",
+            json_body={
+                "candidates": candidates,
+                "agent_id": agent_id,
+                "session_id": session_id,
+                "purpose": purpose,
+                "compatibility_mode": compatibility_mode,
+                "idempotency_key": idempotency_key,
+            },
+        )
+
+    def get_external_governance(self, external_memory_id: str) -> dict:
+        return self._request(
+            "GET", f"/v1/external-memories/{external_memory_id}/governance"
+        )
+
+    def quarantine_external_memory(self, external_memory_id: str, reason: str = "manual quarantine") -> dict:
+        return self._request(
+            "POST",
+            f"/v1/external-memories/{external_memory_id}/quarantine",
+            json_body={"reason": reason},
+        )
 
     def delete(self, memory_id: str, cascade: bool = False) -> bool:
         """Delete a memory. cascade=True also hard-deletes every memory
