@@ -61,7 +61,6 @@ from core.models.memory_record import (
 from core.models.policy import Policy, PrivilegeRules, PurposeBinding
 from core.policy_engine import (
     evaluate_privileged_action,
-    evaluate_purpose_binding,
     filter_by_purpose_binding,
 )
 from core.retrieval_engine import apply_privilege_gate, reciprocal_rank_fusion
@@ -865,20 +864,39 @@ class MemoryStore:
                     )
                 )
                 continue
-            if purpose:
-                policy = self.get_policy(tenant_id, binding["policy_id"])
-                source_type = _jsonb_dict(binding["provenance"]).get("source_type", "user")
-                allowed, reason = evaluate_purpose_binding(policy, purpose, source_type)
-                if not allowed:
-                    decisions.append(
-                        ExternalCandidateDecision(
-                            external_memory_id=external_id,
-                            status="purpose_restricted",
-                            decision="exclude",
-                            reason=reason,
-                        )
+            provenance = _jsonb_dict(binding["provenance"])
+            source_type_value = provenance.get("source_type", "user")
+            try:
+                source_type = SourceType(source_type_value)
+            except ValueError:
+                source_type = SourceType.USER
+            candidate_request = GovernanceEvaluationRequest(
+                operation="external_candidate",
+                tenant_id=tenant_id,
+                customer_id=binding["customer_id"],
+                agent_id=agent_id,
+                session_id=session_id,
+                purpose=purpose,
+                source_type=source_type,
+                external_system="mem0",
+                external_memory_id=external_id,
+            )
+            candidate_policy = self.get_policy(tenant_id, binding["policy_id"])
+            candidate_evaluation = self._governance.evaluate(
+                candidate_request,
+                policy=candidate_policy,
+            )
+            if candidate_evaluation.retrieval != "allow":
+                decisions.append(
+                    ExternalCandidateDecision(
+                        external_memory_id=external_id,
+                        status="purpose_restricted",
+                        decision="exclude",
+                        reason=candidate_evaluation.taint_reason
+                        or "candidate is restricted by governance policy",
                     )
-                    continue
+                )
+                continue
             decisions.append(
                 ExternalCandidateDecision(
                     external_memory_id=external_id,
