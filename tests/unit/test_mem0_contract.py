@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import inspect
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 
 import pytest
 from metaworkers import ExternalContractError
@@ -11,9 +11,14 @@ from metaworkers.adapters.mem0 import GovernedMem0
 
 
 def test_pinned_mem0_oss_contract():
+    try:
+        installed_version = version("mem0ai")
+    except PackageNotFoundError:
+        pytest.skip("mem0ai optional dependency is not installed")
+
     import mem0
 
-    assert version("mem0ai") == "2.0.12"
+    assert installed_version == "2.0.12"
     memory_cls = mem0.Memory
     add = inspect.signature(memory_cls.add)
     search = inspect.signature(memory_cls.search)
