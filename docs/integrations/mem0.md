@@ -46,6 +46,10 @@ result = memory.add(
 results = memory.search("contact preference", user_id="customer-1")
 ```
 
+The adapter verifies that `tenant_id` matches the tenant resolved from the API
+key before it performs a governed operation. The API key, not the request body,
+is the source of tenant authority.
+
 The adapter calls Mem0 for storage and semantic retrieval. GovernedMemory
 evaluates proposed writes, binds the returned Mem0 IDs, and batch-evaluates
 search candidates. It never performs a second embedding or semantic search.
@@ -74,6 +78,11 @@ the adapter generates one and returns it in governance metadata.
 
 Every result includes a `governance` section with the decision, taint, policy,
 correlation ID, external IDs, and stable audit IDs.
+
+Optional content fingerprints are disabled by default. If enabled, configure
+`GOVERNEDMEMORY_FINGERPRINT_SECRET` as a private root secret; production never
+uses a built-in fallback. Fingerprints are internal idempotency data and are
+not returned by the public governance lookup.
 
 ## Compatibility modes
 
@@ -114,6 +123,8 @@ memory.retry_binding(
   `compatible` while migrating existing Mem0 records.
 - **Binding pending:** retry using the same correlation ID and returned Mem0 IDs;
   do not call `mem0.add()` again.
+- **Mem0 add failure:** retry with the same idempotency key. Retries are bounded
+  and preserve the original correlation ID; no automatic Mem0 delete is issued.
 
 ## Non-goals
 

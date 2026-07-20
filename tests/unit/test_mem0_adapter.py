@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from metaworkers import GovernanceDenied, Source
+from metaworkers import ExternalContractError, GovernanceDenied, Source
 from metaworkers.adapters.mem0 import GovernedMem0
 
 
@@ -62,7 +62,11 @@ class FakeGovernance:
             decisions.append(
                 {
                     "external_memory_id": memory_id,
-                    "status": "quarantined" if memory_id == "m-2" else "untracked" if not memory_id else "governed",
+                    "status": "quarantined"
+                    if memory_id == "m-2"
+                    else "untracked"
+                    if not memory_id
+                    else "governed",
                     "decision": "exclude" if memory_id == "m-2" else "allow",
                     "reason": "test",
                 }
@@ -74,8 +78,15 @@ class FakeGovernance:
             "decisions": decisions,
         }
 
-    def quarantine_external_memory(self, external_memory_id, reason):
-        return {"external_memory_id": external_memory_id, "reason": reason}
+    def quarantine_external_memory(
+        self, external_memory_id, reason, *, agent_id="system", session_id="external-quarantine"
+    ):
+        return {
+            "external_memory_id": external_memory_id,
+            "reason": reason,
+            "agent_id": agent_id,
+            "session_id": session_id,
+        }
 
     def get_external_governance(self, external_memory_id):
         return {"external_memory_id": external_memory_id}
@@ -104,6 +115,22 @@ def test_add_governs_then_delegates_and_binds_ids():
     assert mem0.add_calls[0][1]["metadata"]["governedmemory_correlation_id"] == "corr-1"
 
 
+def test_add_preserves_multiple_mem0_results_and_ids():
+    class MultiMem0(FakeMem0):
+        def add(self, messages, **kwargs):
+            self.add_calls.append((messages, kwargs))
+            return {"results": [{"id": "m-1"}, {"metadata": {"id": "m-2"}}]}
+
+    mem0 = MultiMem0()
+    governance = FakeGovernance()
+    result = GovernedMem0(mem0, governance, tenant_id="tenant-a").add(
+        "multiple", user_id="user-a", idempotency_key="multi-key"
+    )
+    assert GovernedMem0._external_id(result["results"][0]) == "m-1"
+    assert GovernedMem0._external_id(result["results"][1]) == "m-2"
+    assert governance.bound[0]["external_memory_ids"] == ["m-1", "m-2"]
+
+
 def test_denied_write_never_calls_mem0():
     mem0 = FakeMem0()
     adapter = GovernedMem0(mem0, FakeGovernance(storage="deny"), tenant_id="tenant-a")
@@ -126,8 +153,27 @@ def test_quarantine_and_retry_delegate_to_governance():
     assert adapter.quarantine("m-1", "investigate") == {
         "external_memory_id": "m-1",
         "reason": "investigate",
+        "agent_id": "system",
+        "session_id": "external-quarantine",
     }
     assert adapter.retry_binding(correlation_id="corr", external_memory_ids=["m-1"]) == {
         "correlation_id": "corr",
         "external_memory_ids": ["m-1"],
     }
+
+
+@pytest.mark.parametrize("mode", ["count", "id"])
+def test_search_rejects_mismatched_governance_decisions(mode):
+    class BrokenGovernance(FakeGovernance):
+        def evaluate_external_candidates(self, **kwargs):
+            response = super().evaluate_external_candidates(**kwargs)
+            if mode == "count":
+                response["decisions"] = response["decisions"][:1]
+            else:
+                response["decisions"][0]["external_memory_id"] = "wrong-id"
+            return response
+
+    with pytest.raises(ExternalContractError):
+        GovernedMem0(FakeMem0(), BrokenGovernance(), tenant_id="tenant-a").search(
+            "safe", user_id="user-a"
+        )

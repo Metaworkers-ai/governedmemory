@@ -607,6 +607,31 @@ class TestRetrievalEngine:
         assert "billing purpose note" not in sales_contents
         assert "open purpose note" in sales_contents  # empty allowed_purposes = open to any
 
+    def test_native_write_preserves_multiple_allowed_purposes(self, migrated_store):
+        tenant = "tenant-e3-purpose-order"
+        record = migrated_store.write(
+            _req(
+                tenant,
+                customer_id="cust-1",
+                content="multi purpose note",
+                allowed_purposes=["billing", "cx_support"],
+            )
+        )
+        assert record.purpose.allowed_purposes == ["billing", "cx_support"]
+        assert record.trust.taint == Taint.TRUSTED
+        billing = migrated_store.retrieve(
+            "multi purpose", tenant, "agent-1", "sess-1", purpose="billing"
+        )
+        support = migrated_store.retrieve(
+            "multi purpose", tenant, "agent-1", "sess-1", purpose="cx_support"
+        )
+        sales = migrated_store.retrieve(
+            "multi purpose", tenant, "agent-1", "sess-1", purpose="sales"
+        )
+        assert [r.id for r in billing] == [record.id]
+        assert [r.id for r in support] == [record.id]
+        assert sales == []
+
     def test_retrieve_respects_k_limit(self, migrated_store):
         tenant = "tenant-e3-klimit"
         for i in range(5):

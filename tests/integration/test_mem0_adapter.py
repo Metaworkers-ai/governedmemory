@@ -4,10 +4,19 @@ from __future__ import annotations
 
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 import uvicorn
-from metaworkers import GovernanceDenied, GovernedMemory, Source
+from metaworkers import (
+    ExternalBindingConflictError,
+    ExternalContractError,
+    ExternalOperationFailed,
+    GovernanceDenied,
+    GovernedMemory,
+    IdempotencyConflictError,
+    Source,
+)
 from metaworkers.adapters.mem0 import GovernedMem0
 
 TENANT = "tenant-mem0-adapter"
@@ -15,19 +24,32 @@ API_KEY = "mem0-adapter-key"
 
 
 class DeterministicMem0:
-    def __init__(self):
+    def __init__(self, prefix="mem0"):
+        self.prefix = prefix
         self.records = []
         self.calls = 0
 
     def add(self, messages, **kwargs):
         self.calls += 1
         content = messages if isinstance(messages, str) else str(messages)
-        memory_id = f"mem0-{self.calls}"
+        memory_id = f"{self.prefix}-{self.calls}"
         self.records.append({"id": memory_id, "memory": content})
         return {"results": [{"id": memory_id, "memory": content}]}
 
     def search(self, query, **kwargs):
         return {"results": list(self.records)}
+
+
+class FailingMem0(DeterministicMem0):
+    def add(self, messages, **kwargs):
+        self.calls += 1
+        raise RuntimeError("simulated Mem0 outage")
+
+
+class MissingIdMem0(DeterministicMem0):
+    def add(self, messages, **kwargs):
+        self.calls += 1
+        return {"results": [{"memory": "no stable ID"}]}
 
 
 @pytest.fixture()
@@ -70,15 +92,21 @@ def test_mem0_add_search_quarantine_and_audit(live_server_url):
 
     assert trusted["governance"]["binding_audit_ids"]
     assert untrusted["governance"]["taint"] == "untrusted"
+    untrusted_metadata = adapter.get_governance("mem0-2")
+    assert untrusted_metadata["lifecycle_state"] == "active"
+    assert untrusted_metadata["quarantine_status"] is False
     assert mem0.calls == 2
 
     governed_results = adapter.search("customer", user_id="customer-1")
     assert [r["id"] for r in governed_results["results"]] == ["mem0-1"]
 
-    adapter.quarantine("mem0-1", "manual review")
+    binding_audit_id = adapter.get_governance("mem0-1")["binding_audit_id"]
+    adapter.quarantine("mem0-1", "manual review", agent_id="moderator", session_id="review-1")
     assert adapter.search("customer", user_id="customer-1")["results"] == []
     metadata = adapter.get_governance("mem0-1")
     assert metadata["lifecycle_state"] == "quarantined"
+    assert metadata["binding_audit_id"] == binding_audit_id
+    assert metadata["quarantine_audit_id"]
 
 
 def test_strict_untrusted_write_never_reaches_mem0(live_server_url):
@@ -97,3 +125,154 @@ def test_strict_untrusted_write_never_reaches_mem0(live_server_url):
             idempotency_key="memory-strict",
         )
     assert mem0.calls == 0
+
+
+def test_search_rejects_cross_customer_binding(live_server_url):
+    mem0 = DeterministicMem0(prefix="scope")
+    adapter = GovernedMem0(
+        mem0,
+        GovernedMemory(live_server_url, API_KEY),
+        tenant_id=TENANT,
+    )
+    adapter.add("customer A private note", user_id="customer-a", idempotency_key="customer-a-1")
+    result = adapter.search("private note", user_id="customer-b")
+    assert result["results"] == []
+    assert result["governance"]["decisions"][0]["status"] == "scope_restricted"
+
+
+def test_mem0_failure_preserves_retry_identity_and_is_bounded(live_server_url):
+    mem0 = FailingMem0(prefix="failure")
+    governance = GovernedMemory(live_server_url, API_KEY)
+    adapter = GovernedMem0(mem0, governance, tenant_id=TENANT)
+    errors = []
+    for _ in range(3):
+        with pytest.raises(ExternalOperationFailed) as exc_info:
+            adapter.add("will fail", user_id="customer-f", idempotency_key="failure-key")
+        errors.append(exc_info.value)
+    assert errors[0].correlation_id
+    assert errors[0].idempotency_key == "failure-key"
+    with pytest.raises(ExternalOperationFailed):
+        adapter.add("will fail", user_id="customer-f", idempotency_key="failure-key")
+    assert mem0.calls == 3
+
+
+def test_missing_mem0_id_is_typed_and_retryable(live_server_url):
+    missing = MissingIdMem0(prefix="missing")
+    governance = GovernedMemory(live_server_url, API_KEY)
+    adapter = GovernedMem0(missing, governance, tenant_id=TENANT)
+    with pytest.raises(ExternalContractError) as exc_info:
+        adapter.add("missing id", user_id="customer-m", idempotency_key="missing-key")
+    assert exc_info.value.correlation_id
+    assert exc_info.value.idempotency_key == "missing-key"
+
+
+def test_concurrent_same_key_evaluation_is_idempotent(live_server_url):
+    governance = GovernedMemory(live_server_url, API_KEY)
+
+    def evaluate():
+        return governance.evaluate_external_write(
+            customer_id="customer-concurrent",
+            agent_id="agent-concurrent",
+            session_id="session-concurrent",
+            content="same payload",
+            source=Source(type="user", ref="concurrent"),
+            idempotency_key="concurrent-key",
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda _: evaluate(), range(8)))
+    assert {result["operation_id"] for result in results}.__len__() == 1
+    assert {result["correlation_id"] for result in results}.__len__() == 1
+
+
+def test_changed_payload_with_same_key_is_a_typed_conflict(live_server_url):
+    governance = GovernedMemory(live_server_url, API_KEY)
+    kwargs = {
+        "customer_id": "customer-conflict",
+        "agent_id": "agent-conflict",
+        "session_id": "session-conflict",
+        "source": Source(type="user", ref="conflict"),
+        "idempotency_key": "conflict-key",
+    }
+    governance.evaluate_external_write(content="first", **kwargs)
+    with pytest.raises(IdempotencyConflictError):
+        governance.evaluate_external_write(content="changed", **kwargs)
+
+
+def test_binding_pending_recovery_rejects_altered_ids(live_server_url):
+    governance = GovernedMemory(live_server_url, API_KEY)
+    owner = governance.evaluate_external_write(
+        customer_id="customer-owner",
+        agent_id="agent-owner",
+        session_id="session-owner",
+        content="owner",
+        source=Source(type="user", ref="owner"),
+        idempotency_key="owner-operation",
+    )
+    governance.bind_external_memories(
+        correlation_id=owner["correlation_id"], external_memory_ids=["occupied-id"]
+    )
+    pending = governance.evaluate_external_write(
+        customer_id="customer-pending",
+        agent_id="agent-pending",
+        session_id="session-pending",
+        content="pending",
+        source=Source(type="user", ref="pending"),
+        idempotency_key="pending-operation",
+    )
+    with pytest.raises(ExternalBindingConflictError):
+        governance.bind_external_memories(
+            correlation_id=pending["correlation_id"], external_memory_ids=["occupied-id"]
+        )
+    with pytest.raises(ExternalBindingConflictError):
+        governance.retry_binding(
+            correlation_id=pending["correlation_id"], external_memory_ids=["different-id"]
+        )
+
+
+def test_concurrent_quarantine_is_idempotent(live_server_url):
+    governance = GovernedMemory(live_server_url, API_KEY)
+    evaluation = governance.evaluate_external_write(
+        customer_id="customer-quarantine",
+        agent_id="agent-quarantine",
+        session_id="session-quarantine",
+        content="quarantine me",
+        source=Source(type="user", ref="quarantine"),
+        idempotency_key="quarantine-operation",
+    )
+    governance.bind_external_memories(
+        correlation_id=evaluation["correlation_id"], external_memory_ids=["quarantine-id"]
+    )
+
+    def quarantine(index):
+        return governance.quarantine_external_memory(
+            "quarantine-id",
+            f"review-{index}",
+            agent_id=f"moderator-{index}",
+            session_id=f"s-{index}",
+        )
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(quarantine, range(4)))
+    assert len({result["quarantine_audit_id"] for result in results}) == 1
+    assert len({result["binding_audit_id"] for result in results}) == 1
+
+
+def test_compatibility_modes_against_real_store(live_server_url):
+    mem0 = DeterministicMem0(prefix="modes")
+    mem0.records.append({"id": "legacy-mode-id", "memory": "legacy"})
+    governance = GovernedMemory(live_server_url, API_KEY)
+
+    compatible = GovernedMem0(mem0, governance, tenant_id=TENANT, compatibility_mode="compatible")
+    assert [
+        item["id"] for item in compatible.search("legacy", user_id="customer-modes")["results"]
+    ] == ["legacy-mode-id"]
+
+    with pytest.warns(RuntimeWarning):
+        observed = GovernedMem0(
+            mem0, governance, tenant_id=TENANT, compatibility_mode="observe"
+        ).search("legacy", user_id="customer-modes")
+    assert [item["id"] for item in observed["results"]] == ["legacy-mode-id"]
+
+    strict = GovernedMem0(mem0, governance, tenant_id=TENANT, compatibility_mode="strict")
+    assert strict.search("legacy", user_id="customer-modes")["results"] == []

@@ -1,5 +1,5 @@
 from core.governance import GovernanceEvaluationRequest, GovernanceEvaluationService
-from core.models import Provenance, SourceType, Taint
+from core.models import Policy, Provenance, PurposeBinding, SourceType, Taint
 
 
 def _request(content: str, source_type: SourceType = SourceType.USER):
@@ -38,3 +38,19 @@ def test_strict_mode_denies_untrusted_content():
     )
     assert decision.storage == "deny"
     assert decision.status == "denied"
+
+
+def test_purpose_binding_restricts_retrieval_without_denied_storage():
+    policy = Policy(
+        id="default",
+        tenant_id="tenant-a",
+        purpose_bindings=[
+            PurposeBinding(purpose="billing", allowed_source_types=["trusted_system"])
+        ],
+    )
+    request = _request("customer prefers email")
+    request.purpose = "billing"
+    decision = GovernanceEvaluationService().evaluate(request, policy=policy)
+    assert decision.storage == "allow"
+    assert decision.retrieval == "purpose_restricted"
+    assert decision.status == "evaluated"
