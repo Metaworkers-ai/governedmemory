@@ -43,6 +43,11 @@ class ExternalOperationFailed(ExternalGovernanceError):
     code = "external_operation_failed"
 
 
+class ExternalWriteClaimError(ExternalGovernanceError):
+    status_code = 409
+    code = "external_write_claim_error"
+
+
 class FingerprintConfigurationError(ExternalGovernanceError):
     status_code = 500
     code = "fingerprint_configuration_error"

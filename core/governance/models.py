@@ -70,3 +70,7 @@ class GovernanceDecision(BaseModel):
     status: EvaluationStatus = "evaluated"
     failure_reason: str | None = None
     evaluated_at: datetime | None = None
+    external_write_claimed: bool = False
+    external_write_in_progress: bool = False
+    external_write_claim_token: str | None = None
+    external_write_claim_expires_at: datetime | None = None

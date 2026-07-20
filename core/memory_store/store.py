@@ -21,6 +21,7 @@ import os
 import uuid
 from collections.abc import Generator
 from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 
 import psycopg2
 import psycopg2.extras
@@ -39,6 +40,7 @@ from core.errors import (
     ExternalGovernanceError,
     ExternalOperationFailed,
     ExternalOperationNotFound,
+    ExternalWriteClaimError,
     FingerprintConfigurationError,
     IdempotencyConflict,
 )
@@ -176,6 +178,9 @@ CREATE TABLE IF NOT EXISTS external_governance_operations (
     retry_count         INTEGER NOT NULL DEFAULT 0,
     max_attempts        INTEGER NOT NULL DEFAULT 3,
     last_failure_at     TIMESTAMPTZ,
+    external_write_claim_hash TEXT,
+    external_write_claimed_at TIMESTAMPTZ,
+    external_write_claim_expires_at TIMESTAMPTZ,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (tenant_id, external_system, operation_type, idempotency_key),
@@ -302,6 +307,18 @@ def init_db(dsn: str) -> None:
         cur.execute(
             "ALTER TABLE external_governance_operations "
             "ADD COLUMN IF NOT EXISTS last_failure_at TIMESTAMPTZ"
+        )
+        cur.execute(
+            "ALTER TABLE external_governance_operations "
+            "ADD COLUMN IF NOT EXISTS external_write_claim_hash TEXT"
+        )
+        cur.execute(
+            "ALTER TABLE external_governance_operations "
+            "ADD COLUMN IF NOT EXISTS external_write_claimed_at TIMESTAMPTZ"
+        )
+        cur.execute(
+            "ALTER TABLE external_governance_operations "
+            "ADD COLUMN IF NOT EXISTS external_write_claim_expires_at TIMESTAMPTZ"
         )
         cur.execute(
             "ALTER TABLE external_memory_bindings ADD COLUMN IF NOT EXISTS quarantine_audit_id UUID"
@@ -577,7 +594,13 @@ class MemoryStore:
 
     @staticmethod
     def _decision_from_operation(row: dict) -> GovernanceDecision:
-        decision_data = _jsonb_dict(row["decision"])
+        # RealDictCursor returns JSONB as a mutable dict. Copy it before adding
+        # response-only claim fields so later persistence helpers do not try to
+        # serialize database datetime objects back into the stored decision.
+        decision_data = dict(_jsonb_dict(row["decision"]))
+        claim_in_progress = bool(
+            row.get("external_write_claim_hash") and row["status"] == "evaluated"
+        )
         decision_data.update(
             {
                 "operation_id": str(row["id"]),
@@ -587,9 +610,69 @@ class MemoryStore:
                 ),
                 "failure_reason": row["failure_reason"],
                 "external_memory_ids": _jsonb_list(row.get("external_memory_ids", [])),
+                "external_write_claimed": False,
+                "external_write_in_progress": claim_in_progress,
+                "external_write_claim_token": None,
+                "external_write_claim_expires_at": row.get("external_write_claim_expires_at"),
             }
         )
         return GovernanceDecision(**decision_data)
+
+    @staticmethod
+    def _external_write_claim_ttl() -> timedelta:
+        seconds = int(os.getenv("GOVERNEDMEMORY_EXTERNAL_WRITE_CLAIM_TTL_SECONDS", "300"))
+        if seconds < 30 or seconds > 3600:
+            raise ValueError(
+                "GOVERNEDMEMORY_EXTERNAL_WRITE_CLAIM_TTL_SECONDS must be between 30 and 3600"
+            )
+        return timedelta(seconds=seconds)
+
+    @classmethod
+    def _external_write_claim_hash(cls, tenant_id: str, claim_token: str) -> str:
+        secret = os.getenv("GOVERNEDMEMORY_OPERATION_SECRET") or os.getenv(
+            "GOVERNEDMEMORY_FINGERPRINT_SECRET"
+        )
+        if not secret:
+            raise FingerprintConfigurationError(
+                "GOVERNEDMEMORY_OPERATION_SECRET is required for external operations"
+            )
+        tenant_key = hmac.new(secret.encode(), tenant_id.encode(), hashlib.sha256).digest()
+        return hmac.new(tenant_key, claim_token.encode(), hashlib.sha256).hexdigest()
+
+    @classmethod
+    def _assert_external_write_claim(
+        cls,
+        operation: dict,
+        tenant_id: str,
+        claim_token: str | None,
+    ) -> None:
+        stored_hash = operation.get("external_write_claim_hash")
+        if not stored_hash or not claim_token:
+            raise ExternalWriteClaimError(
+                "the external write claim is required for this transition",
+                metadata={"correlation_id": operation["correlation_id"]},
+            )
+        submitted_hash = cls._external_write_claim_hash(tenant_id, claim_token)
+        if not hmac.compare_digest(stored_hash, submitted_hash):
+            raise ExternalWriteClaimError(
+                "the external write claim is invalid",
+                metadata={"correlation_id": operation["correlation_id"]},
+            )
+
+    @staticmethod
+    def _claimed_decision(
+        decision: GovernanceDecision,
+        claim_token: str,
+        expires_at: datetime,
+    ) -> GovernanceDecision:
+        return decision.model_copy(
+            update={
+                "external_write_claimed": True,
+                "external_write_in_progress": False,
+                "external_write_claim_token": claim_token,
+                "external_write_claim_expires_at": expires_at,
+            }
+        )
 
     def evaluate_external_write(
         self,
@@ -641,7 +724,65 @@ class MemoryStore:
                         raise IdempotencyConflict(
                             "idempotency_key was reused with different content or context"
                         )
-                    return self._decision_from_operation(existing)
+                    existing_decision = self._decision_from_operation(existing)
+                    if existing["status"] != "evaluated":
+                        return existing_decision
+                    claim_hash = existing.get("external_write_claim_hash")
+                    claim_expires_at = existing.get("external_write_claim_expires_at")
+                    if claim_hash and claim_expires_at and claim_expires_at <= datetime.now(UTC):
+                        failure_reason = (
+                            "external write claim expired with an unknown Mem0 outcome; "
+                            "the idempotency key is terminally failed to prevent a duplicate write"
+                        )
+                        failed_decision = existing_decision.model_copy(
+                            update={
+                                "status": "failed",
+                                "failure_reason": failure_reason,
+                                "external_write_in_progress": False,
+                                "external_write_claim_expires_at": claim_expires_at,
+                            }
+                        )
+                        cur.execute(
+                            """UPDATE external_governance_operations
+                               SET status = 'failed', failure_reason = %s,
+                                   decision = %s, external_write_claim_hash = NULL,
+                                   updated_at = NOW()
+                               WHERE id = %s AND status = 'evaluated'""",
+                            (
+                                failure_reason,
+                                json.dumps(failed_decision.model_dump(mode="json")),
+                                existing["id"],
+                            ),
+                        )
+                        return failed_decision
+                    if claim_hash:
+                        return existing_decision
+
+                    claim_token = str(uuid.uuid4())
+                    claim_expires_at = datetime.now(UTC) + self._external_write_claim_ttl()
+                    cur.execute(
+                        """UPDATE external_governance_operations
+                           SET external_write_claim_hash = %s,
+                               external_write_claimed_at = NOW(),
+                               external_write_claim_expires_at = %s,
+                               updated_at = NOW()
+                           WHERE id = %s AND status = 'evaluated'
+                             AND external_write_claim_hash IS NULL""",
+                        (
+                            self._external_write_claim_hash(request.tenant_id, claim_token),
+                            claim_expires_at,
+                            existing["id"],
+                        ),
+                    )
+                    if cur.rowcount != 1:
+                        return existing_decision.model_copy(
+                            update={"external_write_in_progress": True}
+                        )
+                    return self._claimed_decision(
+                        existing_decision,
+                        claim_token,
+                        claim_expires_at,
+                    )
 
                 operation_id = str(uuid.uuid4())
                 decision = decision.model_copy(update={"operation_id": operation_id})
@@ -666,16 +807,28 @@ class MemoryStore:
                     AuditDecision(outcome=outcome, reason=reason, policy_id=decision.policy_id),
                 )
                 decision = decision.model_copy(update={"evaluation_audit_id": audit_id})
+                claim_token = None
+                claim_hash = None
+                claim_expires_at = None
+                if status_value == "evaluated":
+                    claim_token = str(uuid.uuid4())
+                    claim_hash = self._external_write_claim_hash(
+                        request.tenant_id,
+                        claim_token,
+                    )
+                    claim_expires_at = datetime.now(UTC) + self._external_write_claim_ttl()
                 cur.execute(
                     """INSERT INTO external_governance_operations (
                            id, tenant_id, external_system, operation_type,
                            idempotency_key, correlation_id, storage_decision,
                            retrieval_decision, taint, policy_id,
                            content_fingerprint, context, decision, status,
-                           evaluation_audit_id
+                           evaluation_audit_id, external_write_claim_hash,
+                           external_write_claimed_at, external_write_claim_expires_at
                        ) VALUES (
                            %s, %s, 'mem0', 'external_add', %s, %s, %s, %s,
-                           %s, %s, %s, %s, %s, %s, %s
+                           %s, %s, %s, %s, %s, %s, %s, %s,
+                           CASE WHEN %s IS NULL THEN NULL ELSE NOW() END, %s
                        )""",
                     (
                         operation_id,
@@ -691,8 +844,13 @@ class MemoryStore:
                         json.dumps(decision.model_dump(mode="json")),
                         status_value,
                         audit_id,
+                        claim_hash,
+                        claim_hash,
+                        claim_expires_at,
                     ),
                 )
+        if claim_token and claim_expires_at:
+            return self._claimed_decision(decision, claim_token, claim_expires_at)
         return decision
 
     def bind_external_memories(
@@ -700,6 +858,7 @@ class MemoryStore:
         tenant_id: str,
         correlation_id: str,
         external_memory_ids: list[str],
+        claim_token: str | None = None,
     ) -> GovernanceDecision:
         """Idempotently bind native external IDs after an external write."""
         _require_tenant(tenant_id)
@@ -735,6 +894,8 @@ class MemoryStore:
                             "external operation is terminally failed",
                             metadata={"correlation_id": correlation_id},
                         )
+                    if operation["status"] == "evaluated":
+                        self._assert_external_write_claim(operation, tenant_id, claim_token)
                     if known_ids and known_ids != ids:
                         conflict_to_raise = ExternalBindingConflict(
                             "external memory IDs do not match the first successful Mem0 result",
@@ -864,7 +1025,10 @@ class MemoryStore:
                             cur.execute(
                                 """UPDATE external_governance_operations
                                    SET decision = %s, status = 'completed',
-                                       failure_reason = NULL, updated_at = NOW()
+                                       failure_reason = NULL,
+                                       external_write_claim_hash = NULL,
+                                       external_write_claim_expires_at = NULL,
+                                       updated_at = NOW()
                                    WHERE id = %s""",
                                 (
                                     json.dumps(result.model_dump(mode="json")),
@@ -886,6 +1050,7 @@ class MemoryStore:
         self,
         tenant_id: str,
         correlation_id: str,
+        claim_token: str | None = None,
     ) -> GovernanceDecision:
         """Complete a successful Mem0 add that produced no memory records."""
         _require_tenant(tenant_id)
@@ -914,6 +1079,8 @@ class MemoryStore:
                     )
                 if operation["status"] == "completed":
                     return self._decision_from_operation(operation)
+                if operation["status"] == "evaluated":
+                    self._assert_external_write_claim(operation, tenant_id, claim_token)
 
                 cur.execute(
                     """UPDATE external_governance_operations
@@ -954,6 +1121,8 @@ class MemoryStore:
                     """UPDATE external_governance_operations
                        SET decision = %s, status = 'completed',
                            external_memory_ids = '[]', failure_reason = NULL,
+                           external_write_claim_hash = NULL,
+                           external_write_claim_expires_at = NULL,
                            updated_at = NOW()
                        WHERE id = %s""",
                     (json.dumps(decision.model_dump(mode="json")), operation["id"]),
@@ -981,7 +1150,10 @@ class MemoryStore:
         cur.execute(
             """UPDATE external_governance_operations
                SET status = 'binding_pending', failure_reason = %s,
-                   external_memory_ids = %s, decision = %s, updated_at = NOW()
+                   external_memory_ids = %s, decision = %s,
+                   external_write_claim_hash = NULL,
+                   external_write_claim_expires_at = NULL,
+                   updated_at = NOW()
                WHERE id = %s
                  AND status IN ('evaluated', 'external_succeeded', 'binding_pending')""",
             (
@@ -1022,7 +1194,10 @@ class MemoryStore:
                 cur.execute(
                     """UPDATE external_governance_operations
                        SET status = 'binding_pending', failure_reason = %s,
-                           external_memory_ids = %s, decision = %s, updated_at = NOW()
+                           external_memory_ids = %s, decision = %s,
+                           external_write_claim_hash = NULL,
+                           external_write_claim_expires_at = NULL,
+                           updated_at = NOW()
                        WHERE tenant_id = %s AND correlation_id = %s
                          AND status IN ('evaluated', 'external_succeeded', 'binding_pending')""",
                     (
@@ -1040,6 +1215,7 @@ class MemoryStore:
         correlation_id: str,
         reason: str,
         external_memory_ids: list[str] | None = None,
+        claim_token: str | None = None,
     ) -> GovernanceDecision:
         """Record a failed Mem0 call with bounded retry semantics."""
         _require_tenant(tenant_id)
@@ -1056,6 +1232,8 @@ class MemoryStore:
                     raise ExternalOperationNotFound("governance operation not found")
                 if operation["status"] in {"completed", "denied", "failed"}:
                     return self._decision_from_operation(operation)
+                if operation["status"] == "evaluated":
+                    self._assert_external_write_claim(operation, tenant_id, claim_token)
                 known_ids = _jsonb_list(operation.get("external_memory_ids", []))
                 if known_ids and ids and known_ids != ids:
                     raise ExternalBindingConflict(
@@ -1063,7 +1241,11 @@ class MemoryStore:
                         metadata={"external_memory_ids": known_ids},
                     )
                 attempt = operation["retry_count"] + 1
-                terminal = attempt >= operation["max_attempts"]
+                # A caller can report failure only after receiving the
+                # exclusive external-write claim. At that point the Mem0
+                # outcome is potentially ambiguous, so the same key must never
+                # be reassigned. Fail terminally and require reconciliation.
+                terminal = True
                 stored_ids = known_ids or ids
                 decision = _jsonb_dict(operation["decision"])
                 decision.update(
@@ -1077,7 +1259,10 @@ class MemoryStore:
                     """UPDATE external_governance_operations
                        SET status = %s, failure_reason = %s,
                            retry_count = %s, external_memory_ids = %s,
-                           decision = %s, last_failure_at = NOW(), updated_at = NOW()
+                           decision = %s, last_failure_at = NOW(),
+                           external_write_claim_hash = NULL,
+                           external_write_claim_expires_at = NULL,
+                           updated_at = NOW()
                        WHERE id = %s""",
                     (
                         "failed" if terminal else "evaluated",
@@ -1096,10 +1281,19 @@ class MemoryStore:
                 return self._decision_from_operation(operation)
 
     def retry_binding(
-        self, tenant_id: str, correlation_id: str, external_memory_ids: list[str]
+        self,
+        tenant_id: str,
+        correlation_id: str,
+        external_memory_ids: list[str],
+        claim_token: str | None = None,
     ) -> GovernanceDecision:
         """Recover a binding-pending operation without repeating Mem0.add()."""
-        return self.bind_external_memories(tenant_id, correlation_id, external_memory_ids)
+        return self.bind_external_memories(
+            tenant_id,
+            correlation_id,
+            external_memory_ids,
+            claim_token,
+        )
 
     def evaluate_external_candidates(
         self,

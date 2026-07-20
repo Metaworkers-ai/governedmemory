@@ -53,9 +53,27 @@ def test_candidate_evaluation_batches_candidates(mock_urlopen):
 def test_retry_binding_uses_recovery_route(mock_urlopen):
     _response(mock_urlopen, {"status": "completed"})
     client = GovernedMemory("http://localhost:8000", "key")
-    client.retry_binding(correlation_id="c1", external_memory_ids=["m1"])
+    client.retry_binding(
+        correlation_id="c1",
+        external_memory_ids=["m1"],
+        claim_token="claim-1",
+    )
     request = mock_urlopen.call_args[0][0]
     assert request.full_url.endswith("/v1/external-memories/retry-binding")
+    assert json.loads(request.data)["claim_token"] == "claim-1"
+
+
+@patch("urllib.request.urlopen")
+def test_initial_binding_sends_external_write_claim(mock_urlopen):
+    _response(mock_urlopen, {"status": "completed"})
+    client = GovernedMemory("http://localhost:8000", "key")
+    client.bind_external_memories(
+        correlation_id="c1",
+        external_memory_ids=["m1"],
+        claim_token="claim-1",
+    )
+    request = mock_urlopen.call_args[0][0]
+    assert json.loads(request.data)["claim_token"] == "claim-1"
 
 
 @patch("urllib.request.urlopen")

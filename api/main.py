@@ -138,7 +138,10 @@ def bind_external_memories(
 ):
     try:
         return store.bind_external_memories(
-            tenant_id, body.correlation_id, body.external_memory_ids
+            tenant_id,
+            body.correlation_id,
+            body.external_memory_ids,
+            body.claim_token,
         )
     except (ExternalGovernanceError, ValueError) as exc:
         raise _external_error(exc) from exc
@@ -151,7 +154,12 @@ def retry_external_binding(
     store: MemoryStore = Depends(get_store),
 ):
     try:
-        return store.retry_binding(tenant_id, body.correlation_id, body.external_memory_ids)
+        return store.retry_binding(
+            tenant_id,
+            body.correlation_id,
+            body.external_memory_ids,
+            body.claim_token,
+        )
     except (ExternalGovernanceError, ValueError) as exc:
         raise _external_error(exc) from exc
 
@@ -163,7 +171,11 @@ def complete_external_noop(
     store: MemoryStore = Depends(get_store),
 ):
     try:
-        return store.complete_external_noop(tenant_id, body.correlation_id)
+        return store.complete_external_noop(
+            tenant_id,
+            body.correlation_id,
+            body.claim_token,
+        )
     except (ExternalGovernanceError, ValueError) as exc:
         raise _external_error(exc) from exc
 
@@ -201,6 +213,7 @@ def fail_external_write(
             body.correlation_id,
             body.reason,
             body.external_memory_ids,
+            body.claim_token,
         )
     except (ExternalGovernanceError, ValueError) as exc:
         raise _external_error(exc) from exc

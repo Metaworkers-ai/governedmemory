@@ -218,6 +218,22 @@ class TestMigrations:
         }
         assert expected <= columns, f"Missing columns: {expected - columns}"
 
+    def test_external_operation_claim_columns_exist(self, postgres_dsn):
+        import psycopg2
+
+        init_db(postgres_dsn)
+        with psycopg2.connect(postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                """SELECT column_name FROM information_schema.columns
+                   WHERE table_name = 'external_governance_operations'"""
+            )
+            columns = {row[0] for row in cur.fetchall()}
+        assert {
+            "external_write_claim_hash",
+            "external_write_claimed_at",
+            "external_write_claim_expires_at",
+        } <= columns
+
     def test_audit_table_exists(self, postgres_dsn):
         import psycopg2
 

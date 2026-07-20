@@ -22,6 +22,14 @@ install the SDK and its pinned Mem0 compatibility extra:
 pip install -e sdk/python[mem0]
 ```
 
+Mem0's default `Memory()` configuration uses OpenAI for embeddings and requires
+an API key. Export it before running the examples below, or supply your own
+Mem0 embedder/LLM configuration:
+
+```bash
+export OPENAI_API_KEY="your-openai-api-key"
+```
+
 ## Before and after
 
 Existing Mem0 code can continue to use `Memory` directly:
@@ -73,6 +81,16 @@ search candidates. It never performs a second embedding or semantic search.
 Pass an explicit `idempotency_key` for writes that may be retried. If omitted,
 the adapter generates one and returns it in governance metadata.
 
+The key also serializes the external side effect: exactly one concurrent caller
+receives the external-write claim and may call `mem0.add()`. Other concurrent
+callers receive `ExternalOperationInProgress`; after the owner completes, a
+later call receives the normal completed replay envelope without another Mem0
+write. Unrelated keys are not serialized with each other.
+
+The claim window defaults to five minutes. For Mem0 calls that can legitimately
+run longer, set `GOVERNEDMEMORY_EXTERNAL_WRITE_CLAIM_TTL_SECONDS` on the API
+before starting the stack (allowed range: 30–3600 seconds).
+
 ## Governance behavior
 
 - Trusted content is stored in Mem0 and eligible for governed retrieval.
@@ -115,6 +133,7 @@ contains the correlation ID, idempotency key, and Mem0 IDs:
 memory.retry_binding(
     correlation_id=error.correlation_id,
     external_memory_ids=error.external_memory_ids,
+    claim_token=error.claim_token,
 )
 ```
 
@@ -128,6 +147,13 @@ the replay envelope contains `results: []`,
 `governance.idempotent_replay=true`, and
 `governance.original_mem0_result_available=false`.
 
+An exception raised after `mem0.add()` begins has an ambiguous external outcome:
+Mem0 may have committed before the exception reached the adapter. To preserve
+the at-most-once guarantee, that idempotency key becomes terminally failed
+instead of automatically repeating the external write. Reconcile the Mem0 state
+before choosing a new key. A claim abandoned by a crashed owner likewise expires
+to a terminal failure rather than being reassigned and risking a duplicate.
+
 ## Troubleshooting
 
 - **API connection refused:** run the Quickstart and verify `/healthz`.
@@ -138,8 +164,11 @@ the replay envelope contains `results: []`,
   `compatible` while migrating existing Mem0 records.
 - **Binding pending:** retry using the same correlation ID and returned Mem0 IDs;
   do not call `mem0.add()` again.
-- **Mem0 add failure:** retry with the same idempotency key. Retries are bounded
-  and preserve the original correlation ID; no automatic Mem0 delete is issued.
+- **Write already in progress:** another caller owns this idempotency key. Wait
+  for it to complete, then replay the same key to obtain the governed result.
+- **Mem0 add failure:** the key becomes terminally failed because the external
+  outcome may be ambiguous. Reconcile Mem0 before using a new key; no automatic
+  Mem0 delete or unsafe repeat is issued.
 
 ## Non-goals
 

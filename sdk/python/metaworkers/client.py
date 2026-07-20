@@ -50,15 +50,22 @@ class GovernanceDenied(GovernedMemoryError):
 class ExternalBindingPending(GovernedMemoryError):
     """Mem0 has IDs, but the governance binding still needs recovery."""
 
-    def __init__(self, correlation_id: str, idempotency_key: str, external_memory_ids: list[str]):
+    def __init__(
+        self,
+        correlation_id: str,
+        idempotency_key: str,
+        external_memory_ids: list[str],
+        claim_token: str | None = None,
+    ):
         self.correlation_id = correlation_id
         self.idempotency_key = idempotency_key
         self.external_memory_ids = external_memory_ids
+        self.claim_token = claim_token
         super().__init__(409, "external memory binding is pending")
 
 
 class ExternalOperationFailed(GovernedMemoryError):
-    """The external operation reached its bounded failure limit."""
+    """The external operation reached a terminal failure state."""
 
     def __init__(self, detail: dict | str):
         self.detail_payload = detail if isinstance(detail, dict) else {"message": detail}
@@ -66,6 +73,21 @@ class ExternalOperationFailed(GovernedMemoryError):
         self.idempotency_key = self.detail_payload.get("idempotency_key")
         self.external_memory_ids = self.detail_payload.get("external_memory_ids", [])
         super().__init__(409, self.detail_payload.get("message", str(detail)))
+
+
+class ExternalOperationInProgress(GovernedMemoryError):
+    """Another caller owns the external write for this idempotency key."""
+
+    def __init__(
+        self,
+        correlation_id: str,
+        idempotency_key: str,
+        claim_expires_at: str | None = None,
+    ):
+        self.correlation_id = correlation_id
+        self.idempotency_key = idempotency_key
+        self.claim_expires_at = claim_expires_at
+        super().__init__(409, "external write is already in progress")
 
 
 class ExternalContractError(GovernedMemoryError):
@@ -182,6 +204,8 @@ class GovernedMemory:
                 code = detail.get("code")
                 if code == "external_operation_failed":
                     raise ExternalOperationFailed(detail) from None
+                if code == "external_write_claim_error":
+                    raise ExternalOperationFailed(detail) from None
                 if code == "external_contract_violation":
                     raise ExternalContractError(
                         detail.get("message", "external contract violation")
@@ -295,6 +319,7 @@ class GovernedMemory:
         correlation_id: str,
         reason: str,
         external_memory_ids: list[str] | None = None,
+        claim_token: str | None = None,
     ) -> dict:
         return self._request(
             "POST",
@@ -303,6 +328,7 @@ class GovernedMemory:
                 "correlation_id": correlation_id,
                 "reason": reason,
                 "external_memory_ids": external_memory_ids or [],
+                "claim_token": claim_token,
             },
         )
 
@@ -312,7 +338,11 @@ class GovernedMemory:
             raise TenantMismatch(expected_tenant_id, actual)
 
     def bind_external_memories(
-        self, *, correlation_id: str, external_memory_ids: list[str]
+        self,
+        *,
+        correlation_id: str,
+        external_memory_ids: list[str],
+        claim_token: str | None = None,
     ) -> dict:
         return self._request(
             "POST",
@@ -320,24 +350,37 @@ class GovernedMemory:
             json_body={
                 "correlation_id": correlation_id,
                 "external_memory_ids": external_memory_ids,
+                "claim_token": claim_token,
             },
         )
 
-    def retry_binding(self, *, correlation_id: str, external_memory_ids: list[str]) -> dict:
+    def retry_binding(
+        self,
+        *,
+        correlation_id: str,
+        external_memory_ids: list[str],
+        claim_token: str | None = None,
+    ) -> dict:
         return self._request(
             "POST",
             "/v1/external-memories/retry-binding",
             json_body={
                 "correlation_id": correlation_id,
                 "external_memory_ids": external_memory_ids,
+                "claim_token": claim_token,
             },
         )
 
-    def complete_external_noop(self, *, correlation_id: str) -> dict:
+    def complete_external_noop(
+        self,
+        *,
+        correlation_id: str,
+        claim_token: str | None = None,
+    ) -> dict:
         return self._request(
             "POST",
             "/v1/external-memories/complete-noop",
-            json_body={"correlation_id": correlation_id},
+            json_body={"correlation_id": correlation_id, "claim_token": claim_token},
         )
 
     def evaluate_external_candidates(

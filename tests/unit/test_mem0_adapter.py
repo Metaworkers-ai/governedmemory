@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import pytest
 from metaworkers import (
+    ExternalBindingPending,
     ExternalContractError,
+    ExternalOperationInProgress,
     GovernanceDenied,
     IdempotencyConflictError,
     Source,
@@ -49,6 +51,10 @@ class FakeGovernance:
             "evaluation_audit_id": "audit-evaluation",
             "external_memory_ids": [],
             "binding_audit_ids": [],
+            "external_write_claimed": True,
+            "external_write_in_progress": False,
+            "external_write_claim_token": "claim-token",
+            "external_write_claim_expires_at": "2026-07-20T12:00:00+00:00",
         }
 
     def bind_external_memories(self, **kwargs):
@@ -64,6 +70,10 @@ class FakeGovernance:
             "evaluation_audit_id": "audit-evaluation",
             "external_memory_ids": kwargs["external_memory_ids"],
             "binding_audit_ids": ["audit-bind"],
+            "external_write_claimed": False,
+            "external_write_in_progress": False,
+            "external_write_claim_token": None,
+            "external_write_claim_expires_at": None,
         }
 
     def complete_external_noop(self, **kwargs):
@@ -78,6 +88,10 @@ class FakeGovernance:
             "evaluation_audit_id": "audit-evaluation",
             "external_memory_ids": [],
             "binding_audit_ids": ["audit-noop"],
+            "external_write_claimed": False,
+            "external_write_in_progress": False,
+            "external_write_claim_token": None,
+            "external_write_claim_expires_at": None,
         }
 
     def evaluate_external_candidates(self, **kwargs):
@@ -138,6 +152,7 @@ def test_add_governs_then_delegates_and_binds_ids():
     assert result["results"][0]["id"] == "m-1"
     assert result["governance"]["status"] == "completed"
     assert mem0.add_calls[0][1]["metadata"]["governedmemory_correlation_id"] == "corr-1"
+    assert governance.bound[0]["claim_token"] == "claim-token"
 
 
 def test_add_preserves_multiple_mem0_results_and_ids():
@@ -182,6 +197,43 @@ def test_denied_write_never_calls_mem0():
     with pytest.raises(GovernanceDenied):
         adapter.add("blocked", user_id="user-a")
     assert mem0.add_calls == []
+
+
+def test_non_owner_receives_in_progress_without_calling_mem0():
+    class InProgressGovernance(FakeGovernance):
+        def evaluate_external_write(self, **kwargs):
+            response = super().evaluate_external_write(**kwargs)
+            response.update(
+                {
+                    "external_write_claimed": False,
+                    "external_write_in_progress": True,
+                    "external_write_claim_token": None,
+                }
+            )
+            return response
+
+    mem0 = FakeMem0()
+    adapter = GovernedMem0(mem0, InProgressGovernance(), tenant_id="tenant-a")
+    with pytest.raises(ExternalOperationInProgress):
+        adapter.add("same operation", user_id="user-a", idempotency_key="same-key")
+    assert mem0.add_calls == []
+
+
+def test_binding_transport_failure_preserves_owner_claim_for_retry():
+    class UnreachableBindingGovernance(FakeGovernance):
+        def bind_external_memories(self, **kwargs):
+            raise OSError("connection reset before binding reached the API")
+
+    adapter = GovernedMem0(
+        FakeMem0(),
+        UnreachableBindingGovernance(),
+        tenant_id="tenant-a",
+    )
+    with pytest.raises(ExternalBindingPending) as exc_info:
+        adapter.add("safe", user_id="user-a", idempotency_key="pending-key")
+    error = exc_info.value
+    assert error.external_memory_ids == ["m-1"]
+    assert error.claim_token == "claim-token"
 
 
 def test_search_preserves_order_and_excludes_quarantined():

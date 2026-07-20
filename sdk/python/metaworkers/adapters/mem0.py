@@ -16,6 +16,7 @@ from ..client import (
     ExternalBindingPending,
     ExternalContractError,
     ExternalOperationFailed,
+    ExternalOperationInProgress,
     GovernanceDenied,
     GovernedMemory,
     GovernedMemoryError,
@@ -205,6 +206,31 @@ class GovernedMem0:
                     fallback_correlation_id=fallback_correlation_id,
                     idempotency_key=idempotency_key,
                 )
+        for field in ("external_write_claimed", "external_write_in_progress"):
+            if not isinstance(decision.get(field), bool):
+                raise cls._contract_error(
+                    f"GovernedMemory {stage} response field {field!r} must be boolean",
+                    decision,
+                    fallback_correlation_id=fallback_correlation_id,
+                    idempotency_key=idempotency_key,
+                )
+        if decision["external_write_claimed"] and decision["external_write_in_progress"]:
+            raise cls._contract_error(
+                f"GovernedMemory {stage} response cannot both grant and report an active claim",
+                decision,
+                fallback_correlation_id=fallback_correlation_id,
+                idempotency_key=idempotency_key,
+            )
+        if decision["external_write_claimed"] and (
+            not isinstance(decision.get("external_write_claim_token"), str)
+            or not decision["external_write_claim_token"]
+        ):
+            raise cls._contract_error(
+                f"GovernedMemory {stage} response granted a claim without a claim token",
+                decision,
+                fallback_correlation_id=fallback_correlation_id,
+                idempotency_key=idempotency_key,
+            )
         if expected_external_ids is not None and decision["external_memory_ids"] != (
             expected_external_ids
         ):
@@ -393,6 +419,13 @@ class GovernedMem0:
                     "status": "failed",
                 }
             )
+        if evaluation["external_write_in_progress"] or not evaluation["external_write_claimed"]:
+            raise ExternalOperationInProgress(
+                evaluation["correlation_id"],
+                key,
+                evaluation.get("external_write_claim_expires_at"),
+            )
+        claim_token = evaluation["external_write_claim_token"]
 
         mem0_metadata = dict(metadata or {})
         mem0_metadata.update(
@@ -415,12 +448,16 @@ class GovernedMem0:
                 failure = self.governance.mark_external_failure(
                     correlation_id=evaluation["correlation_id"],
                     reason=f"Mem0 add failed: {exc}",
+                    claim_token=claim_token,
                 )
             except Exception:
                 failure = {}
             raise ExternalOperationFailed(
                 {
-                    "message": "Mem0 add failed; retry with the same idempotency key",
+                    "message": (
+                        "Mem0 add failed with an ambiguous external outcome; "
+                        "reconcile Mem0 before using a new idempotency key"
+                    ),
                     "correlation_id": evaluation["correlation_id"],
                     "idempotency_key": key,
                     "status": failure.get("status", "evaluated"),
@@ -442,6 +479,7 @@ class GovernedMem0:
                 self.governance.mark_external_failure(
                     correlation_id=evaluation["correlation_id"],
                     reason=str(exc),
+                    claim_token=claim_token,
                 )
             except Exception:
                 pass
@@ -453,17 +491,24 @@ class GovernedMem0:
                 bound = self.governance.bind_external_memories(
                     correlation_id=evaluation["correlation_id"],
                     external_memory_ids=external_ids,
+                    claim_token=claim_token,
                 )
                 binding_stage = "binding"
             else:
                 bound = self.governance.complete_external_noop(
                     correlation_id=evaluation["correlation_id"],
+                    claim_token=claim_token,
                 )
                 binding_stage = "no-op completion"
         except GovernedMemoryError:
             raise
         except Exception as exc:
-            raise ExternalBindingPending(evaluation["correlation_id"], key, external_ids) from exc
+            raise ExternalBindingPending(
+                evaluation["correlation_id"],
+                key,
+                external_ids,
+                claim_token,
+            ) from exc
         bound = self._validate_governance_decision(
             bound,
             stage=binding_stage,
@@ -599,8 +644,17 @@ class GovernedMem0:
     def get_governance(self, external_memory_id: str) -> dict:
         return self.governance.get_external_governance(external_memory_id)
 
-    def retry_binding(self, *, correlation_id: str, external_memory_ids: list[str]) -> dict:
-        return self.governance.retry_binding(
-            correlation_id=correlation_id,
-            external_memory_ids=external_memory_ids,
-        )
+    def retry_binding(
+        self,
+        *,
+        correlation_id: str,
+        external_memory_ids: list[str],
+        claim_token: str | None = None,
+    ) -> dict:
+        kwargs = {
+            "correlation_id": correlation_id,
+            "external_memory_ids": external_memory_ids,
+        }
+        if claim_token is not None:
+            kwargs["claim_token"] = claim_token
+        return self.governance.retry_binding(**kwargs)

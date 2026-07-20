@@ -14,6 +14,7 @@ from metaworkers import (
     ExternalBindingConflictError,
     ExternalContractError,
     ExternalOperationFailed,
+    ExternalOperationInProgress,
     GovernanceDenied,
     GovernedMemory,
     IdempotencyConflictError,
@@ -149,23 +150,20 @@ def test_search_rejects_cross_customer_binding(live_server_url):
     assert result["governance"]["decisions"][0]["status"] == "scope_restricted"
 
 
-def test_mem0_failure_preserves_retry_identity_and_is_bounded(live_server_url):
+def test_mem0_failure_is_terminal_to_prevent_ambiguous_duplicate_write(live_server_url):
     mem0 = FailingMem0(prefix="failure")
     governance = GovernedMemory(live_server_url, API_KEY)
     adapter = GovernedMem0(mem0, governance, tenant_id=TENANT)
-    errors = []
-    for _ in range(3):
-        with pytest.raises(ExternalOperationFailed) as exc_info:
-            adapter.add("will fail", user_id="customer-f", idempotency_key="failure-key")
-        errors.append(exc_info.value)
-    assert errors[0].correlation_id
-    assert errors[0].idempotency_key == "failure-key"
+    with pytest.raises(ExternalOperationFailed) as exc_info:
+        adapter.add("will fail", user_id="customer-f", idempotency_key="failure-key")
+    assert exc_info.value.correlation_id
+    assert exc_info.value.idempotency_key == "failure-key"
     with pytest.raises(ExternalOperationFailed):
         adapter.add("will fail", user_id="customer-f", idempotency_key="failure-key")
-    assert mem0.calls == 3
+    assert mem0.calls == 1
 
 
-def test_missing_mem0_id_is_typed_and_retryable(live_server_url):
+def test_missing_mem0_id_is_typed_and_not_rewritten(live_server_url):
     missing = MissingIdMem0(prefix="missing")
     governance = GovernedMemory(live_server_url, API_KEY)
     adapter = GovernedMem0(missing, governance, tenant_id=TENANT)
@@ -173,6 +171,9 @@ def test_missing_mem0_id_is_typed_and_retryable(live_server_url):
         adapter.add("missing id", user_id="customer-m", idempotency_key="missing-key")
     assert exc_info.value.correlation_id
     assert exc_info.value.idempotency_key == "missing-key"
+    with pytest.raises(ExternalOperationFailed):
+        adapter.add("missing id", user_id="customer-m", idempotency_key="missing-key")
+    assert missing.calls == 1
 
 
 def test_empty_mem0_result_completes_without_binding(live_server_url, migrated_dsn):
@@ -239,6 +240,146 @@ def test_concurrent_same_key_evaluation_is_idempotent(live_server_url):
         results = list(pool.map(lambda _: evaluate(), range(8)))
     assert {result["operation_id"] for result in results}.__len__() == 1
     assert {result["correlation_id"] for result in results}.__len__() == 1
+    assert sum(result["external_write_claimed"] for result in results) == 1
+    assert sum(result["external_write_in_progress"] for result in results) == 7
+
+
+def test_concurrent_same_key_adapter_calls_write_mem0_at_most_once(live_server_url):
+    class SlowMem0(DeterministicMem0):
+        def __init__(self):
+            super().__init__(prefix="claimed")
+            self._lock = threading.Lock()
+
+        def add(self, messages, **kwargs):
+            with self._lock:
+                self.calls += 1
+                call_number = self.calls
+            time.sleep(0.2)
+            memory_id = f"{self.prefix}-{call_number}"
+            self.records.append({"id": memory_id, "memory": str(messages)})
+            return {"results": [{"id": memory_id, "memory": str(messages)}]}
+
+    mem0 = SlowMem0()
+    adapter = GovernedMem0(
+        mem0,
+        GovernedMemory(live_server_url, API_KEY),
+        tenant_id=TENANT,
+    )
+
+    def add():
+        try:
+            result = adapter.add(
+                "one external side effect",
+                user_id="customer-claimed",
+                idempotency_key="claimed-operation",
+            )
+            return ("completed", result["governance"]["correlation_id"])
+        except ExternalOperationInProgress as exc:
+            return ("in_progress", exc.correlation_id)
+
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        outcomes = list(pool.map(lambda _: add(), range(10)))
+
+    assert mem0.calls == 1
+    assert [status for status, _ in outcomes].count("completed") == 1
+    assert [status for status, _ in outcomes].count("in_progress") == 9
+    assert len({correlation_id for _, correlation_id in outcomes}) == 1
+
+
+def test_unrelated_idempotency_keys_can_write_concurrently(live_server_url):
+    class ParallelMem0(DeterministicMem0):
+        def __init__(self):
+            super().__init__(prefix="parallel")
+            self._barrier = threading.Barrier(2)
+            self._lock = threading.Lock()
+
+        def add(self, messages, **kwargs):
+            with self._lock:
+                self.calls += 1
+                call_number = self.calls
+            self._barrier.wait(timeout=3)
+            memory_id = f"{self.prefix}-{call_number}"
+            self.records.append({"id": memory_id, "memory": str(messages)})
+            return {"results": [{"id": memory_id, "memory": str(messages)}]}
+
+    mem0 = ParallelMem0()
+    adapter = GovernedMem0(
+        mem0,
+        GovernedMemory(live_server_url, API_KEY),
+        tenant_id=TENANT,
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(
+            pool.map(
+                lambda key: adapter.add(
+                    f"parallel write {key}",
+                    user_id="customer-parallel",
+                    idempotency_key=key,
+                ),
+                ["parallel-key-a", "parallel-key-b"],
+            )
+        )
+    assert mem0.calls == 2
+    assert {result["governance"]["status"] for result in results} == {"completed"}
+
+
+def test_expired_write_claim_fails_terminally_without_reassignment(
+    live_server_url,
+    migrated_dsn,
+):
+    governance = GovernedMemory(live_server_url, API_KEY)
+    first = governance.evaluate_external_write(
+        customer_id="customer-expired-claim",
+        agent_id="agent-expired-claim",
+        session_id="session-expired-claim",
+        content="ambiguous claimed write",
+        source=Source(type="user", ref="expired-claim"),
+        idempotency_key="expired-claim-operation",
+    )
+    assert first["external_write_claimed"] is True
+    with psycopg2.connect(migrated_dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            """UPDATE external_governance_operations
+               SET external_write_claim_expires_at = NOW() - INTERVAL '1 second'
+               WHERE tenant_id = %s AND correlation_id = %s""",
+            (TENANT, first["correlation_id"]),
+        )
+
+    replay = governance.evaluate_external_write(
+        customer_id="customer-expired-claim",
+        agent_id="agent-expired-claim",
+        session_id="session-expired-claim",
+        content="ambiguous claimed write",
+        source=Source(type="user", ref="expired-claim"),
+        idempotency_key="expired-claim-operation",
+    )
+    assert replay["status"] == "failed"
+    assert replay["external_write_claimed"] is False
+    assert "prevent a duplicate write" in replay["failure_reason"]
+
+
+def test_initial_binding_requires_the_owner_claim(live_server_url):
+    governance = GovernedMemory(live_server_url, API_KEY)
+    evaluation = governance.evaluate_external_write(
+        customer_id="customer-claim-auth",
+        agent_id="agent-claim-auth",
+        session_id="session-claim-auth",
+        content="claim protected binding",
+        source=Source(type="user", ref="claim-auth"),
+        idempotency_key="claim-auth-operation",
+    )
+    with pytest.raises(ExternalOperationFailed):
+        governance.bind_external_memories(
+            correlation_id=evaluation["correlation_id"],
+            external_memory_ids=["claim-auth-id"],
+        )
+    completed = governance.bind_external_memories(
+        correlation_id=evaluation["correlation_id"],
+        external_memory_ids=["claim-auth-id"],
+        claim_token=evaluation["external_write_claim_token"],
+    )
+    assert completed["status"] == "completed"
 
 
 def test_changed_payload_with_same_key_is_a_typed_conflict(live_server_url):
@@ -294,7 +435,9 @@ def test_binding_pending_recovery_rejects_altered_ids(live_server_url, migrated_
         idempotency_key="owner-operation",
     )
     governance.bind_external_memories(
-        correlation_id=owner["correlation_id"], external_memory_ids=["occupied-id"]
+        correlation_id=owner["correlation_id"],
+        external_memory_ids=["occupied-id"],
+        claim_token=owner["external_write_claim_token"],
     )
     pending = governance.evaluate_external_write(
         customer_id="customer-pending",
@@ -306,7 +449,9 @@ def test_binding_pending_recovery_rejects_altered_ids(live_server_url, migrated_
     )
     with pytest.raises(ExternalBindingConflictError):
         governance.bind_external_memories(
-            correlation_id=pending["correlation_id"], external_memory_ids=["occupied-id"]
+            correlation_id=pending["correlation_id"],
+            external_memory_ids=["occupied-id"],
+            claim_token=pending["external_write_claim_token"],
         )
     with pytest.raises(ExternalBindingConflictError):
         governance.retry_binding(
@@ -341,6 +486,7 @@ def test_binding_conflict_and_retry_are_serialized(
     governance.bind_external_memories(
         correlation_id=owner["correlation_id"],
         external_memory_ids=["race-occupied-id"],
+        claim_token=owner["external_write_claim_token"],
     )
     pending = governance.evaluate_external_write(
         customer_id="customer-race-pending",
@@ -370,6 +516,7 @@ def test_binding_conflict_and_retry_are_serialized(
             governance.bind_external_memories(
                 correlation_id=pending["correlation_id"],
                 external_memory_ids=["race-occupied-id"],
+                claim_token=pending["external_write_claim_token"],
             )
 
     def competing_retry():
@@ -414,10 +561,10 @@ def test_concurrent_same_id_binding_completes_once(live_server_url, migrated_dsn
     )
 
     def bind(index):
-        method = governance.bind_external_memories if index % 2 == 0 else governance.retry_binding
-        return method(
+        return governance.bind_external_memories(
             correlation_id=evaluation["correlation_id"],
             external_memory_ids=["bind-once-id"],
+            claim_token=evaluation["external_write_claim_token"],
         )
 
     with ThreadPoolExecutor(max_workers=8) as pool:
@@ -461,11 +608,12 @@ def test_competing_multi_id_bindings_do_not_deadlock(live_server_url, migrated_d
     first = evaluate("first")
     second = evaluate("second")
 
-    def attempt(correlation_id, external_ids):
+    def attempt(evaluation, external_ids):
         try:
             result = governance.bind_external_memories(
-                correlation_id=correlation_id,
+                correlation_id=evaluation["correlation_id"],
                 external_memory_ids=external_ids,
+                claim_token=evaluation["external_write_claim_token"],
             )
             return ("completed", result["operation_id"])
         except ExternalBindingConflictError:
@@ -475,12 +623,12 @@ def test_competing_multi_id_bindings_do_not_deadlock(live_server_url, migrated_d
         futures = [
             pool.submit(
                 attempt,
-                first["correlation_id"],
+                first,
                 ["multi-shared-a", "multi-shared-b"],
             ),
             pool.submit(
                 attempt,
-                second["correlation_id"],
+                second,
                 ["multi-shared-b", "multi-shared-a"],
             ),
         ]
@@ -526,7 +674,10 @@ def test_terminal_external_operation_states_are_immutable(live_server_url, migra
         source=Source(type="user", ref="terminal-noop"),
         idempotency_key="terminal-noop-operation",
     )
-    governance.complete_external_noop(correlation_id=noop["correlation_id"])
+    governance.complete_external_noop(
+        correlation_id=noop["correlation_id"],
+        claim_token=noop["external_write_claim_token"],
+    )
     completed_snapshot = snapshot(noop["correlation_id"])
     with pytest.raises(ExternalBindingConflictError):
         governance.bind_external_memories(
@@ -548,11 +699,11 @@ def test_terminal_external_operation_states_are_immutable(live_server_url, migra
         source=Source(type="user", ref="terminal-failed"),
         idempotency_key="terminal-failed-operation",
     )
-    for attempt in range(3):
-        governance.mark_external_failure(
-            correlation_id=failed["correlation_id"],
-            reason=f"failure {attempt}",
-        )
+    governance.mark_external_failure(
+        correlation_id=failed["correlation_id"],
+        reason="ambiguous external failure",
+        claim_token=failed["external_write_claim_token"],
+    )
     failed_snapshot = snapshot(failed["correlation_id"])
     assert failed_snapshot[0] == "failed"
     governance.mark_external_failure(
@@ -611,7 +762,9 @@ def test_concurrent_quarantine_is_idempotent(live_server_url):
         idempotency_key="quarantine-operation",
     )
     governance.bind_external_memories(
-        correlation_id=evaluation["correlation_id"], external_memory_ids=["quarantine-id"]
+        correlation_id=evaluation["correlation_id"],
+        external_memory_ids=["quarantine-id"],
+        claim_token=evaluation["external_write_claim_token"],
     )
 
     def quarantine(index):
