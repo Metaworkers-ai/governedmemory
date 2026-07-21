@@ -4,6 +4,8 @@
 
 **Goal (unchanged):** get independently-citable proof points and real distribution for what already exists — not new engine capability. If it's not proof or distribution, it's out of scope.
 
+**Related:** [Governance Gap Closure](roadmap-governance-gaps.md) covers the opposite kind of work — real engine gaps (contradiction detection, agent-scoped memory visibility) identified against external research, plus a benchmark harness that doubles as a proof point for Workstream A below. Keep the two docs separate: this one is proof/distribution only, that one is engine work.
+
 **Team shape assumed:** 3-5 developers, AI-assisted ("vibe coding") development. Every ticket has a machine-checkable definition of done — a benchmark number, a merged PR, a live URL — not "make it good."
 
 ---
