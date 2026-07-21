@@ -38,6 +38,9 @@ Two other real benchmarks exist and are worth knowing about, but are explicitly 
 1. **Scaffold (day 1):** `pip install langchain-cli`, generate a partner-package skeleton per [LangChain's template](https://python.langchain.com/docs/contributing/how_to/integrations/from_template/). Confirm `langchain-metaworkers` is unclaimed on PyPI before committing to the name. **Definition of done:** skeleton package imports cleanly.
 2. **Implement (days 2-4):** A `BaseRetriever` subclass wrapping `metaworkers.GovernedMemory.retrieve()` — `purpose`/`agent_id`/`session_id` as constructor or call-time args, taint/policy filtering happens for free since it's the same `retrieve()` call the SDK already makes. Add the LangChain-standard integration test suite (they provide a base test class for retrievers). **Definition of done:** LangChain's own standard retriever tests pass against a local Governed Memory instance.
 3. **Docs + publish (days 6-8):** Write the integration doc page using LangChain's doc-generation CLI, publish `langchain-metaworkers` to PyPI, submit the docs PR to LangChain's integrations directory per their contribution process. Add a short "Use with LangChain" section to the main README. **Definition of done:** `pip install langchain-metaworkers` works from a clean environment; docs PR is opened against `langchain-ai/langchain` (merge timing is out of your control — opening it is the deliverable).
+4. **LangSmith public eval + case-study pitch (days 8-10):** LangSmith is not a benchmark — it's not a public leaderboard, and a shared eval is self-reported the same as any vendor claim (unlike Workstream A's AgentDojo number, which sits on a third-party registry). Its value here is reach, not proof: LangSmith's actual customer base (Klarna, C.H. Robinson, Dun & Bradstreet, Vizient are named case studies) is a far larger and more commercially relevant audience than the academic security-benchmark crowd. Using the now-published `langchain-metaworkers` retriever, build a small LangSmith dataset/experiment reproducing the flagship phishing-email-to-refund scenario, pytest-integrated (LangSmith supports failing a PR when an eval score drops), and share it publicly via `share_dataset`. Then pitch the retriever package + eval to [LangChain's case-studies team](https://www.langchain.com/case-studies) for a blog feature. **Definition of done:** a public, shareable LangSmith eval link exists; the case-study pitch has been sent (a placement isn't guaranteed or required for this ticket to be done — sending it is).
+
+**Not this sprint, flagged for the week-3 buffer:** contributing a prompt-injection-resistance evaluator to [`openevals`](https://github.com/langchain-ai/openevals), LangChain's own open-source evaluator library — at ~1.1k GitHub stars it's more visible than either AgentDojo or ASB, but it's a distinct piece of work (a reusable evaluator, not a retriever adapter) and shouldn't be pulled into week 1-2 alongside everything else above.
 
 ---
 
@@ -59,8 +62,8 @@ Two other real benchmarks exist and are worth knowing about, but are explicitly 
 | | Workstream A (benchmark) | Workstream B (LangChain) | Workstream C (GTM assets) |
 |---|---|---|---|
 | **Week 1** | Spec + adapter build | Scaffold + implement | One-click demo + GIF |
-| **Week 2** | Run sweep + publish results | Publish package + submit docs PR | One-pager + discovery |
-| **Week 3 (buffer, optional)** | Only if capacity: a second benchmark data point (InjecAgent) — pick at most one | Only if capacity: a second framework adapter (e.g. LlamaIndex) — pick at most one | Design-partner outreach using what's now live |
+| **Week 2** | Run sweep + publish results | Publish package + submit docs PR + LangSmith eval + case-study pitch | One-pager + discovery |
+| **Week 3 (buffer, optional)** | Only if capacity: a second benchmark data point (InjecAgent) — pick at most one | Only if capacity: an `openevals` contribution, or a second framework adapter (e.g. LlamaIndex) — pick at most one | Design-partner outreach using what's now live |
 
 Week 3 is a checkpoint, not a pre-committed backlog — decide what's worth pulling forward based on what actually landed in weeks 1-2, rather than locking it in now.
 
@@ -69,4 +72,5 @@ Week 3 is a checkpoint, not a pre-committed backlog — decide what's worth pull
 By the end of week 2, you should be able to say, with a link for each claim:
 - "Independently benchmarked on [AgentDojo](https://agentdojo.spylab.ai/results/) (NeurIPS 2024): attack success rate cut from X% to Y%, Z% task utility retained" — a number, not an adjective
 - "`pip install langchain-metaworkers` — one of N LangChain retriever integrations, live in their directory"
+- "Here's a public LangSmith eval showing it block the same attack" — a link a LangChain-ecosystem buyer can run themselves, plus a pitch in front of their case-studies team
 - "Try it yourself in under 2 minutes, no setup" — a link, not an invitation to clone a repo
