@@ -903,7 +903,7 @@ E1-E7 are complete: core data models, the Write Governor, the Retrieval Engine, 
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for how to pick up an epic.
 
-For the near-term go-to-market plan — benchmark validation, a LangChain integration, and a frictionless demo — see [docs/traction-roadmap.md](docs/traction-roadmap.md). That roadmap is deliberately about proving and distributing what's already built, not new engine capability.
+For the near-term go-to-market plan — an independently-verifiable benchmark result, shipping the in-review Mem0 adapter, and closing specific gaps on the public site — see [docs/traction-roadmap.md](docs/traction-roadmap.md). That roadmap is deliberately about proving and distributing what's already built, not new engine capability, and is kept up to date as things ship rather than re-planned from scratch.
 
 ---
 
