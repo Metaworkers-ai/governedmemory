@@ -4,6 +4,11 @@ Governed Memory handles multi-tenant customer data and is explicitly designed
 to defend against prompt-injection and data-poisoning attacks. We take
 security reports seriously and appreciate responsible disclosure.
 
+> Looking for how the system handles data — the deployment model, what does and
+> doesn't leave your environment, tenant isolation, and the audit trail? See the
+> [Security & Data Handling Overview](docs/security-overview.md). This file is
+> specifically about **reporting a vulnerability**.
+
 ## Reporting a Vulnerability
 
 **Please do not open a public GitHub issue for security vulnerabilities.**
