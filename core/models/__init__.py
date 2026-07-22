@@ -1,4 +1,10 @@
 from .audit_event import AuditActor, AuditDecision, AuditEvent, AuditOp, AuditOutcome
+from .external_memory import (
+    ExternalCandidateDecision,
+    ExternalCandidateEvaluation,
+    ExternalMemoryCandidate,
+    ExternalMemoryGovernance,
+)
 from .memory_record import (
     Access,
     MemoryRecord,
@@ -30,4 +36,8 @@ __all__ = [
     "Policy",
     "PurposeBinding",
     "PrivilegeRules",
+    "ExternalMemoryCandidate",
+    "ExternalCandidateDecision",
+    "ExternalCandidateEvaluation",
+    "ExternalMemoryGovernance",
 ]

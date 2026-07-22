@@ -1,0 +1,2 @@
+# Pinned Mem0 OSS version covered by the adapter contract test.
+mem0ai==2.0.12

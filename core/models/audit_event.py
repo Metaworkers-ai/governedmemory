@@ -25,6 +25,9 @@ class AuditOp(str, Enum):
     QUARANTINE = "quarantine"
     PURGE = "purge"
     POLICY_DECISION = "policy_decision"
+    EXTERNAL_EVALUATION = "external_evaluation"
+    EXTERNAL_BINDING = "external_binding"
+    EXTERNAL_QUARANTINE = "external_quarantine"
 
 
 class AuditOutcome(str, Enum):

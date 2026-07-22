@@ -80,6 +80,9 @@ Want to import `core/` directly in a Python shell instead of going through the R
 
 For REST API + Python SDK details, see [REST API (E7)](#rest-api-e7--self-hosted) below.
 
+For integrating an existing Mem0 OSS application, see
+[GovernedMemory + Mem0](docs/integrations/mem0.md).
+
 ---
 
 ## Enterprise

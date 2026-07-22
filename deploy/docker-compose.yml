@@ -65,6 +65,12 @@ services:
       DATABASE_URL: postgresql://mw:mw_dev_password@postgres:5432/governedmemory
       # Override with your own tenant:key pairs — this default is dev-only.
       GOVERNEDMEMORY_API_KEYS: ${GOVERNEDMEMORY_API_KEYS:-solstice-cloud:demo-key}
+      # Keyed idempotency signatures prevent persisted public content hashes.
+      # Always override this dev-only value outside local Quickstart.
+      GOVERNEDMEMORY_OPERATION_SECRET: ${GOVERNEDMEMORY_OPERATION_SECRET:-quickstart-dev-operation-secret}
+      # A replay after this claim window fails terminally rather than risking
+      # a duplicate external write. Increase it for unusually slow Mem0 calls.
+      GOVERNEDMEMORY_EXTERNAL_WRITE_CLAIM_TTL_SECONDS: ${GOVERNEDMEMORY_EXTERNAL_WRITE_CLAIM_TTL_SECONDS:-300}
     ports:
       - "${API_HOST_PORT:-8000}:8000"
     depends_on:

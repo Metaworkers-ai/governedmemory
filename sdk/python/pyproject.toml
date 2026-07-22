@@ -19,6 +19,9 @@ classifiers = [
 # by design -- see metaworkers/client.py's module docstring.
 dependencies = []
 
+[project.optional-dependencies]
+mem0 = ["mem0ai==2.0.12"]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["metaworkers*"]

@@ -256,7 +256,16 @@ class TestAuditEvent:
 
     def test_all_ops_present(self):
         ops = {op.value for op in AuditOp}
-        assert ops == {"write", "retrieve", "quarantine", "purge", "policy_decision"}
+        assert ops == {
+            "write",
+            "retrieve",
+            "quarantine",
+            "purge",
+            "policy_decision",
+            "external_evaluation",
+            "external_binding",
+            "external_quarantine",
+        }
 
     def test_all_outcomes_present(self):
         outcomes = {o.value for o in AuditOutcome}

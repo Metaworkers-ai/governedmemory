@@ -118,9 +118,67 @@ def _req(
 
 class TestMigrations:
     def test_init_db_is_idempotent(self, postgres_dsn):
-        """Calling init_db twice must not raise — all statements use IF NOT EXISTS."""
-        init_db(postgres_dsn)  # already run by fixture; must be a no-op
+        """Repeated startup keeps an already-current audit constraint intact."""
+        import psycopg2
+
+        init_db(postgres_dsn)
+        with psycopg2.connect(postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                """SELECT oid FROM pg_constraint
+                   WHERE conrelid = 'audit'::regclass
+                     AND conname = 'audit_op_check'"""
+            )
+            original_constraint_oid = cur.fetchone()[0]
+        init_db(postgres_dsn)  # second call must be a no-op
         init_db(postgres_dsn)  # third call — still fine
+        with psycopg2.connect(postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                """SELECT oid FROM pg_constraint
+                   WHERE conrelid = 'audit'::regclass
+                     AND conname = 'audit_op_check'"""
+            )
+            assert cur.fetchone()[0] == original_constraint_oid
+
+    def test_init_db_upgrades_only_a_stale_audit_constraint(self, postgres_dsn):
+        import psycopg2
+
+        init_db(postgres_dsn)
+        with psycopg2.connect(postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute("ALTER TABLE audit DROP CONSTRAINT audit_op_check")
+            cur.execute(
+                """ALTER TABLE audit ADD CONSTRAINT audit_op_check CHECK (op IN (
+                       'write', 'retrieve', 'quarantine', 'purge', 'policy_decision'
+                   ))"""
+            )
+            cur.execute(
+                """SELECT oid FROM pg_constraint
+                   WHERE conrelid = 'audit'::regclass
+                     AND conname = 'audit_op_check'"""
+            )
+            stale_constraint_oid = cur.fetchone()[0]
+
+        init_db(postgres_dsn)
+        with psycopg2.connect(postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                """SELECT oid, pg_get_constraintdef(oid)
+                   FROM pg_constraint
+                   WHERE conrelid = 'audit'::regclass
+                     AND conname = 'audit_op_check'"""
+            )
+            upgraded_constraint_oid, definition = cur.fetchone()
+        assert upgraded_constraint_oid != stale_constraint_oid
+        assert "external_evaluation" in definition
+        assert "external_binding" in definition
+        assert "external_quarantine" in definition
+
+        init_db(postgres_dsn)
+        with psycopg2.connect(postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                """SELECT oid FROM pg_constraint
+                   WHERE conrelid = 'audit'::regclass
+                     AND conname = 'audit_op_check'"""
+            )
+            assert cur.fetchone()[0] == upgraded_constraint_oid
 
     def test_memory_table_exists(self, postgres_dsn):
         import psycopg2
@@ -159,6 +217,22 @@ class TestMigrations:
             "updated_at",
         }
         assert expected <= columns, f"Missing columns: {expected - columns}"
+
+    def test_external_operation_claim_columns_exist(self, postgres_dsn):
+        import psycopg2
+
+        init_db(postgres_dsn)
+        with psycopg2.connect(postgres_dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                """SELECT column_name FROM information_schema.columns
+                   WHERE table_name = 'external_governance_operations'"""
+            )
+            columns = {row[0] for row in cur.fetchall()}
+        assert {
+            "external_write_claim_hash",
+            "external_write_claimed_at",
+            "external_write_claim_expires_at",
+        } <= columns
 
     def test_audit_table_exists(self, postgres_dsn):
         import psycopg2
@@ -606,6 +680,31 @@ class TestRetrievalEngine:
         assert "open purpose note" in billing_contents
         assert "billing purpose note" not in sales_contents
         assert "open purpose note" in sales_contents  # empty allowed_purposes = open to any
+
+    def test_native_write_preserves_multiple_allowed_purposes(self, migrated_store):
+        tenant = "tenant-e3-purpose-order"
+        record = migrated_store.write(
+            _req(
+                tenant,
+                customer_id="cust-1",
+                content="multi purpose note",
+                allowed_purposes=["billing", "cx_support"],
+            )
+        )
+        assert record.purpose.allowed_purposes == ["billing", "cx_support"]
+        assert record.trust.taint == Taint.TRUSTED
+        billing = migrated_store.retrieve(
+            "multi purpose", tenant, "agent-1", "sess-1", purpose="billing"
+        )
+        support = migrated_store.retrieve(
+            "multi purpose", tenant, "agent-1", "sess-1", purpose="cx_support"
+        )
+        sales = migrated_store.retrieve(
+            "multi purpose", tenant, "agent-1", "sess-1", purpose="sales"
+        )
+        assert [r.id for r in billing] == [record.id]
+        assert [r.id for r in support] == [record.id]
+        assert sales == []
 
     def test_retrieve_respects_k_limit(self, migrated_store):
         tenant = "tenant-e3-klimit"

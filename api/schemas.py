@@ -12,7 +12,13 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from core.models import Access, Provenance, Purpose, Temporal
+from core.models import (
+    Access,
+    ExternalMemoryCandidate,
+    Provenance,
+    Purpose,
+    Temporal,
+)
 
 
 class WriteBody(BaseModel):
@@ -61,3 +67,49 @@ class CascadePurgePlanResponse(BaseModel):
     root_id: str
     descendant_ids: list[str]
     descendant_count: int
+
+
+class ExternalWriteEvaluationBody(BaseModel):
+    customer_id: str
+    agent_id: str
+    session_id: str
+    content: str
+    provenance: Provenance
+    purpose: str | None = None
+    idempotency_key: str
+    correlation_id: str | None = None
+    strict_untrusted_write: bool = False
+
+
+class ExternalBindingBody(BaseModel):
+    correlation_id: str
+    external_memory_ids: list[str]
+    claim_token: str | None = None
+
+
+class ExternalNoopCompletionBody(BaseModel):
+    correlation_id: str
+    claim_token: str | None = None
+
+
+class ExternalFailureBody(BaseModel):
+    correlation_id: str
+    reason: str
+    external_memory_ids: list[str] = Field(default_factory=list)
+    claim_token: str | None = None
+
+
+class ExternalCandidateEvaluationBody(BaseModel):
+    candidates: list[ExternalMemoryCandidate]
+    customer_id: str | None = None
+    agent_id: str = "system"
+    session_id: str = "system"
+    purpose: str | None = None
+    compatibility_mode: str = "compatible"
+    idempotency_key: str | None = None
+
+
+class ExternalQuarantineBody(BaseModel):
+    reason: str = "manual quarantine"
+    agent_id: str = "system"
+    session_id: str = "external-quarantine"

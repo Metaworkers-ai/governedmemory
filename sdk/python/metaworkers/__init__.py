@@ -1,3 +1,33 @@
-from .client import GovernedMemory, GovernedMemoryError, Source
+from .adapters.mem0 import GovernedMem0
+from .client import (
+    ExternalBindingConflictError,
+    ExternalBindingPending,
+    ExternalContractError,
+    ExternalOperationFailed,
+    ExternalOperationInProgress,
+    ExternalOperationNotFoundError,
+    ExternalScopeError,
+    GovernanceDenied,
+    GovernedMemory,
+    GovernedMemoryError,
+    IdempotencyConflictError,
+    Source,
+    TenantMismatch,
+)
 
-__all__ = ["GovernedMemory", "GovernedMemoryError", "Source"]
+__all__ = [
+    "GovernedMemory",
+    "GovernedMemoryError",
+    "GovernanceDenied",
+    "ExternalBindingPending",
+    "ExternalContractError",
+    "ExternalBindingConflictError",
+    "IdempotencyConflictError",
+    "ExternalOperationFailed",
+    "ExternalOperationInProgress",
+    "ExternalOperationNotFoundError",
+    "ExternalScopeError",
+    "TenantMismatch",
+    "GovernedMem0",
+    "Source",
+]

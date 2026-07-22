@@ -64,6 +64,23 @@ jobs:
       - name: pytest tests/integration
         run: pytest tests/integration/ -v --cov=core --cov=api --cov=metaworkers --cov-report=term-missing
 
+  test-mem0-contract:
+    name: Mem0 OSS contract (pinned)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install pinned Mem0 extra
+        run: |
+          pip install -r requirements-dev.txt
+          pip install -e .
+          pip install -e "sdk/python[mem0]"
+      - name: pytest pinned Mem0 contract
+        run: pytest tests/unit/test_mem0_contract.py -v
+
   web:
     name: Web (lint, typecheck, build)
     runs-on: ubuntu-latest

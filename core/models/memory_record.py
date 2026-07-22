@@ -96,6 +96,9 @@ class MemoryRecord(BaseModel):
     access: Access = Field(default_factory=Access)
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
+    # The append-only audit event associated with the operation that returned
+    # this record.  This is response metadata, not a persisted memory column.
+    audit_id: str | None = None
 
 
 class WriteRequest(BaseModel):
