@@ -105,3 +105,20 @@ jobs:
           GOVERNEDMEMORY_API_URL: http://localhost:8000
           GOVERNEDMEMORY_API_KEY: ci-placeholder-key
         run: npm run build
+
+  package-smoke:
+    name: Clean SDK install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install from a clean environment
+        run: |
+          python -m venv "$RUNNER_TEMP/sdk-venv"
+          "$RUNNER_TEMP/sdk-venv/bin/python" -m pip install --upgrade pip
+          "$RUNNER_TEMP/sdk-venv/bin/python" -m pip install ./sdk/python
+      - name: Import the installed client
+        run: |
+          "$RUNNER_TEMP/sdk-venv/bin/python" -c "from metaworkers import GovernedMemory, Source; print(GovernedMemory, Source)"

@@ -11,6 +11,11 @@ A governed memory layer for enterprise AI agents. Every memory record carries pr
 
 **[→ Try the hosted demo](https://demo.metaworkers.ai/)** — run the governed-write and retrieval flow in a disposable, synthetic-data sandbox; no account or local setup required.
 
+**[→ Quickstart guide](docs/quickstart.md)** — the standalone local integration path, lifecycle commands, and troubleshooting checklist.
+
+**[→ Distribution checklist](docs/distribution.md)** — package, launch, CI/CD,
+and privacy-preserving adoption follow-ups.
+
 **[→ Join the Discord community](https://discord.gg/4XFAyrMYa6)** — ask questions, share ideas, get support, and contribute to Governed Memory.
 
 **Current status:** E1 + E2 + E3 + E4 + E5 + E6 + E7 complete — core data models, Postgres+pgvector store, a Write Governor pipeline (injection scanning + dedup), a governed Retrieval Engine (hybrid search + a real privilege gate), a Policy Engine (purpose-binding + privileged-action evaluation), a Detection module (trained injection classifier with tracked precision/recall), an Audit Graph (provenance lineage, cascade purge, a formal hash-chain verifier), and a self-hosted REST API covering memory/retrieve/quarantine/delete/audit/customers/memories (plus a thin `metaworkers` Python client) sit in front of every write and every read. A Next.js frontend on top of the REST API replaces the earlier Streamlit demo.
@@ -105,6 +110,14 @@ For REST API + Python SDK details, see [REST API (E7)](#rest-api-e7--self-hosted
 
 For integrating an existing Mem0 OSS application, see
 [GovernedMemory + Mem0](docs/integrations/mem0.md).
+
+### See it in action
+
+![GovernedMemory attack and audit demo](docs/assets/governedmemory-demo.gif)
+
+The short visual walkthrough shows a suspicious memory being classified and then
+excluded from governed retrieval. Use the [hosted sandbox](https://demo.metaworkers.ai/)
+for the interactive version.
 
 ---
 
@@ -249,8 +262,12 @@ Or bring up the database, API, and web console together: `docker compose -f depl
 
 A thin client for the REST API above — no third-party dependencies (stdlib `urllib.request` only), and no dependency on this repo's `core`/`api` packages, so installing it doesn't pull in Postgres/FastAPI/etc.
 ```bash
-pip install -e sdk/python   # not yet published to PyPI
+pip install metaworkers
 ```
+
+For unreleased source changes, use `pip install -e sdk/python`. The package
+publish workflow builds the SDK from `sdk/python/` on version tags; the Mem0
+extra is released with the adapter branch once that branch is merged.
 
 ```python
 from metaworkers import GovernedMemory, Source
@@ -271,6 +288,9 @@ results = mem.retrieve(
 ```
 
 Any non-2xx response raises `metaworkers.GovernedMemoryError` with `.status_code`/`.detail`. See [sdk/python/README.md](sdk/python/README.md) for the full method list.
+
+For Mem0 OSS, see the [Mem0 adapter guide](https://github.com/Metaworkers-ai/governedmemory/blob/mem0-adapter/docs/integrations/mem0.md)
+(the adapter package release is pending merge).
 
 ---
 
