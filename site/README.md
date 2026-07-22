@@ -6,8 +6,8 @@ in review vs. next, and a self-host quickstart. Separate in purpose from
 [`web/`](../web) (the authenticated internal console) — this page is public and
 requires no backend to load.
 
-**Live:** https://d1t8rv0ba48g0k.cloudfront.net *(placeholder URL — swap once a
-custom domain is attached)*
+**Live:** https://d1t8rv0ba48g0k.cloudfront.net
+**Hosted demo:** https://demo.metaworkers.ai/ (public, synthetic data only)
 
 ## Preview locally
 
