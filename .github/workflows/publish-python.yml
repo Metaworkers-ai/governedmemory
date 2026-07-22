@@ -5,14 +5,47 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to validate (for example, v0.1.0.dev1)"
+        required: true
+        type: string
 
 permissions:
   contents: read
   id-token: write
 
 jobs:
+  validate:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Require tag to match package version
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          package_version="$(python - <<'PY'
+          import tomllib
+          from pathlib import Path
+
+          with Path("sdk/python/pyproject.toml").open("rb") as fh:
+              print(tomllib.load(fh)["project"]["version"])
+          PY
+          )"
+          expected_tag="v${package_version}"
+          if [ "${RELEASE_TAG}" != "${expected_tag}" ]; then
+            echo "Refusing to publish: ${RELEASE_TAG} does not match ${expected_tag}."
+            exit 1
+          fi
+
   build:
     name: Build metaworkers distribution
+    needs: validate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

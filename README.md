@@ -261,13 +261,17 @@ Or bring up the database, API, and web console together: `docker compose -f depl
 ### Python SDK (`metaworkers`)
 
 A thin client for the REST API above — no third-party dependencies (stdlib `urllib.request` only), and no dependency on this repo's `core`/`api` packages, so installing it doesn't pull in Postgres/FastAPI/etc.
+
+The package is not published to PyPI yet. Install the current SDK from the
+repository in a clean environment:
+
 ```bash
-pip install metaworkers
+python -m pip install "git+https://github.com/Metaworkers-ai/governedmemory.git@main#subdirectory=sdk/python"
 ```
 
-For unreleased source changes, use `pip install -e sdk/python`. The package
-publish workflow builds the SDK from `sdk/python/` on version tags; the Mem0
-extra is released with the adapter branch once that branch is merged.
+For local source changes, use `python -m pip install -e ./sdk/python` from the
+repository root. Once the first release is published, the install command will
+be `python -m pip install metaworkers`.
 
 ```python
 from metaworkers import GovernedMemory, Source
@@ -289,8 +293,7 @@ results = mem.retrieve(
 
 Any non-2xx response raises `metaworkers.GovernedMemoryError` with `.status_code`/`.detail`. See [sdk/python/README.md](sdk/python/README.md) for the full method list.
 
-For Mem0 OSS, see the [Mem0 adapter guide](https://github.com/Metaworkers-ai/governedmemory/blob/mem0-adapter/docs/integrations/mem0.md)
-(the adapter package release is pending merge).
+For Mem0 OSS, see the [Mem0 adapter guide](https://github.com/Metaworkers-ai/governedmemory/blob/main/docs/integrations/mem0.md).
 
 ---
 

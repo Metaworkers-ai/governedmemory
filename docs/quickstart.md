@@ -60,4 +60,4 @@ commands. Use `reset` only for a disposable demo database.
 
 For the underlying API and Python client, see the [REST API and SDK section in
 the README](../README.md#rest-api-e7--self-hosted). For the next integration
-step, see the [Mem0 adapter guide](https://github.com/Metaworkers-ai/governedmemory/blob/mem0-adapter/docs/integrations/mem0.md).
+step, see the [Mem0 adapter guide](https://github.com/Metaworkers-ai/governedmemory/blob/main/docs/integrations/mem0.md).
