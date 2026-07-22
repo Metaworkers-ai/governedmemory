@@ -91,6 +91,12 @@ The core governed-memory engine here is open source (MIT) — self-host it, audi
 
 ---
 
+## Security
+
+Evaluating Governed Memory for a security review? The [Security & Data Handling Overview](docs/security-overview.md) covers the deployment model, what data does and doesn't leave your environment, tenant isolation, and the tamper-evident audit trail. To report a vulnerability, see [SECURITY.md](SECURITY.md).
+
+---
+
 ## What's in E1
 
 | Component | File | What it does |
