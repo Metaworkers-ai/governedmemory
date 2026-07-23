@@ -22,10 +22,11 @@ This page separates repository changes from account-level launch operations.
 These require repository, PyPI, AWS, or DNS administration and are not implied
 by a code commit:
 
-1. Merge the Mem0 adapter, bump `sdk/python/pyproject.toml` to the release
-   version, then publish the adapter-enabled `metaworkers` extra from a version
-   tag. Configure the PyPI `pypi` environment and trusted publisher for the
-   `publish-python.yml` workflow first.
+1. Bump `sdk/python/pyproject.toml` to the release version, configure the PyPI
+   `pypi` environment and trusted publisher for
+   `publish-python.yml`, then publish the adapter-enabled `metaworkers` extra
+   from a matching version tag. The workflow verifies the package can be
+   installed from PyPI after publication.
 2. Configure the `production-site` GitHub environment values listed in
    [site/README.md](../site/README.md), then run the site workflow once with
    `workflow_dispatch`.

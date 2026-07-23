@@ -19,12 +19,17 @@ jobs:
   validate:
     name: Validate release tag
     runs-on: ubuntu-latest
+    outputs:
+      package_version: ${{ steps.version.outputs.package_version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - name: Require tag to match package version
+        id: version
         env:
           RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
         run: |
@@ -37,6 +42,7 @@ jobs:
               print(tomllib.load(fh)["project"]["version"])
           PY
           )"
+          echo "package_version=${package_version}" >> "$GITHUB_OUTPUT"
           expected_tag="v${package_version}"
           if [ "${RELEASE_TAG}" != "${expected_tag}" ]; then
             echo "Refusing to publish: ${RELEASE_TAG} does not match ${expected_tag}."
@@ -49,6 +55,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -75,3 +83,30 @@ jobs:
           name: metaworkers-dist
           path: dist
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+  verify-package-channel:
+    name: Verify PyPI installation
+    needs: [validate, publish]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install the published package from PyPI
+        env:
+          PACKAGE_VERSION: ${{ needs.validate.outputs.package_version }}
+        run: |
+          set -euo pipefail
+          package="metaworkers==${PACKAGE_VERSION}"
+          for attempt in $(seq 1 12); do
+            if python -m pip install --no-cache-dir --index-url https://pypi.org/simple "$package"; then
+              break
+            fi
+            if [ "$attempt" -eq 12 ]; then
+              echo "PyPI did not expose $package after publication."
+              exit 1
+            fi
+            sleep 10
+          done
+      - name: Import the published package
+        run: python -c "from metaworkers import GovernedMemory, Source; print(GovernedMemory, Source)"
