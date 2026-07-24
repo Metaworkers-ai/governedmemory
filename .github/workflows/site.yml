@@ -19,8 +19,8 @@ jobs:
     environment:
       name: production-site
     steps:
-      - uses: actions/checkout@v4
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
           role-to-assume: ${{ secrets.SITE_AWS_ROLE_ARN }}
           aws-region: ${{ vars.SITE_AWS_REGION || 'ap-south-1' }}

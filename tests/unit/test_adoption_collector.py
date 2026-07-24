@@ -40,3 +40,18 @@ def test_validation_rejects_invalid_duration_and_result():
         validate_event({**valid, "duration_seconds": -1})
     with pytest.raises(ValueError, match="success"):
         validate_event({**valid, "success": "true"})
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("surface", "user wrote a paragraph", "surface"),
+        ("version", "release notes with personal data", "semantic version"),
+        ("anonymous_id", "alice@example.com", "32-character"),
+        ("error_code", "database password leaked", "lowercase token"),
+    ],
+)
+def test_validation_bounds_string_fields(field, value, message):
+    valid = build_event(event="sdk_install", surface="sdk", version="0.1.0", success=True)
+    with pytest.raises(ValueError, match=message):
+        validate_event({**valid, field: value})

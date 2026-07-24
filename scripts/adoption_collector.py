@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import secrets
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,6 +25,10 @@ EVENTS = (
     "first_governed_operation",
     "cta_clicked",
 )
+SURFACES = ("quickstart", "sandbox", "sdk", "site")
+TOKEN_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
+ANONYMOUS_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:[.-][0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
 SENSITIVE_FIELDS = {
     "api_key",
     "content",
@@ -88,9 +93,20 @@ def validate_event(event: Any) -> dict[str, Any]:
         raise ValueError(f"unknown fields are not allowed: {', '.join(sorted(unknown))}")
     if event["event"] not in EVENTS:
         raise ValueError(f"unknown event: {event['event']!r}")
-    for field in ("event", "surface", "version", "anonymous_id"):
-        if not isinstance(event[field], str) or not event[field].strip():
-            raise ValueError(f"{field} must be a non-empty string")
+    if event["surface"] not in SURFACES:
+        raise ValueError(f"surface must be one of: {', '.join(SURFACES)}")
+    if not isinstance(event["version"], str) or not VERSION_RE.fullmatch(event["version"]):
+        raise ValueError("version must be a semantic version")
+    if not isinstance(event["anonymous_id"], str) or not ANONYMOUS_ID_RE.fullmatch(
+        event["anonymous_id"]
+    ):
+        raise ValueError("anonymous_id must be a 32-character lowercase hexadecimal id")
+    if not isinstance(event["occurred_at"], str) or not event["occurred_at"].endswith("Z"):
+        raise ValueError("occurred_at must be an ISO-8601 UTC timestamp ending in Z")
+    try:
+        datetime.fromisoformat(event["occurred_at"].removesuffix("Z"))
+    except ValueError as exc:
+        raise ValueError("occurred_at must be an ISO-8601 UTC timestamp") from exc
     if not isinstance(event["success"], bool):
         raise ValueError("success must be a boolean")
     if "duration_seconds" in event and (
@@ -98,8 +114,8 @@ def validate_event(event: Any) -> dict[str, Any]:
     ):
         raise ValueError("duration_seconds must be a non-negative integer")
     if "error_code" in event and event["error_code"] is not None:
-        if not isinstance(event["error_code"], str) or not event["error_code"].strip():
-            raise ValueError("error_code must be a non-empty string when present")
+        if not isinstance(event["error_code"], str) or not TOKEN_RE.fullmatch(event["error_code"]):
+            raise ValueError("error_code must be a short lowercase token when present")
     return event
 
 

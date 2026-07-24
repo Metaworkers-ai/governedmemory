@@ -32,8 +32,10 @@ python scripts/adoption_metrics_report.py \
 ```
 
 This is deliberately an operator-invoked configuration, not automatic
-telemetry. Enabling a hosted endpoint later requires an explicit team decision
-covering the endpoint owner, retention period, access controls, deletion path,
+telemetry. It will not measure real adoption unless an approved operator
+explicitly records events and runs the report. Enabling a hosted endpoint later
+requires an explicit team decision covering the endpoint owner, retention
+period, access controls, deletion path,
 privacy notice, and an opt-in mechanism before any deployment configuration is
 changed.
 
@@ -45,7 +47,7 @@ An event is a JSON object with these fields:
 {
   "event": "quickstart_completed",
   "occurred_at": "2026-07-22T12:00:00Z",
-  "anonymous_id": "salted-install-or-session-hash",
+  "anonymous_id": "0123456789abcdef0123456789abcdef",
   "surface": "quickstart",
   "version": "0.1.0",
   "duration_seconds": 184,
@@ -66,9 +68,12 @@ Allowed event names:
 | `first_governed_operation` | First successful governed write/retrieval observed |
 | `cta_clicked` | A user selected a documented next step |
 
-`anonymous_id` must be generated locally from a rotating salt or ephemeral
-session identifier. It must not be reversible into a person, repository clone,
-customer, or memory record.
+`anonymous_id` must be a locally generated 32-character lowercase hexadecimal
+value from a rotating salt or ephemeral session identifier. `surface` is one
+of `quickstart`, `sandbox`, `sdk`, or `site`; `version` is a semantic version;
+and `error_code` is a short lowercase token. These bounds prevent free-form
+content from being smuggled into metrics. The identifier must not be
+reversible into a person, repository clone, customer, or memory record.
 
 ## Local report
 
