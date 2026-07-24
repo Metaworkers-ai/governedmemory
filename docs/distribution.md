@@ -17,6 +17,8 @@ This page separates repository changes from account-level launch operations.
   or memory-content disclosure.
 - A short attack/block [GIF](assets/governedmemory-demo.gif) and launch drafts
   are committed.
+- The `v0.1.0` [launch release](https://github.com/Metaworkers-ai/governedmemory/releases/tag/v0.1.0)
+  publishes the launch notes, GIF, and 30-second demo video.
 - Privacy-preserving adoption events and a local report generator are documented
   in [adoption-metrics.md](adoption-metrics.md).
 - The collector decision is complete: hosted analytics remains disabled; the
@@ -36,8 +38,9 @@ by a code commit:
    entries in AWS before calling this complete.
 2. After deployment, verify `og:url`, the README link, both aliases, and HTTPS
    redirects from the CloudFront infrastructure URL.
-3. Publish the launch draft through the agreed channels after a maintainer has
-   reviewed claims and links.
+3. Publish the launch draft through the agreed external channels after a
+   maintainer has reviewed claims and links. The GitHub release is already
+   live; Discord and any other social channels remain channel-specific actions.
 4. If the team later wants hosted analytics, approve the endpoint owner,
    retention, access, deletion, privacy notice, and opt-in mechanism first. Do
    not enable a hosted collector by merely setting an environment variable.

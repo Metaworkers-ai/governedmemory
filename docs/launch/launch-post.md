@@ -25,6 +25,7 @@ and [Discord](https://discord.gg/4XFAyrMYa6).
 Suggested launch links:
 
 - Demo: https://demo.metaworkers.ai/
+- Release notes and media: https://github.com/Metaworkers-ai/governedmemory/releases/tag/v0.1.0
 - Repository: https://github.com/Metaworkers-ai/governedmemory
 - Quickstart: https://github.com/Metaworkers-ai/governedmemory/blob/main/docs/quickstart.md
 - Community: https://discord.gg/4XFAyrMYa6
