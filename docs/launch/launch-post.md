@@ -15,8 +15,8 @@ tamper-evident audit trail.
 See the attack/block flow in the [hosted sandbox](https://demo.metaworkers.ai/),
 then run the same path locally with the [Quickstart](../quickstart.md). If you
 use Mem0 OSS, the [Mem0 adapter guide](https://github.com/Metaworkers-ai/governedmemory/blob/main/docs/integrations/mem0.md)
-shows the intended five-line integration. The SDK's first PyPI release is
-pending; the guide includes a source-install command for now.
+shows the intended five-line integration. The stable SDK is available from
+PyPI as `metaworkers==0.1.0`.
 
 The project is MIT-licensed. Contributions, threat-model feedback, and real
 integration examples are welcome in [GitHub issues](https://github.com/Metaworkers-ai/governedmemory/issues)

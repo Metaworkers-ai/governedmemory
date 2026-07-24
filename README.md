@@ -2,12 +2,12 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CI](https://github.com/Metaworkers-ai/governedmemory/actions/workflows/ci.yml/badge.svg)](https://github.com/Metaworkers-ai/governedmemory/actions/workflows/ci.yml)
-[![Website](https://img.shields.io/badge/website-governed--memory-2E6F5E)](https://d1t8rv0ba48g0k.cloudfront.net)
+[![Website](https://img.shields.io/badge/website-governed--memory-2E6F5E)](https://governedmemory.metaworkers.ai/)
 [![Discord](https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&logoColor=white)](https://discord.gg/4XFAyrMYa6)
 
 A governed memory layer for enterprise AI agents. Every memory record carries provenance, trust labels, purpose bindings, and a tamper-evident audit trail. Agents read only what they're allowed to read.
 
-**[→ Project site](https://d1t8rv0ba48g0k.cloudfront.net)** — the problem this solves, how the governance pipeline works, and what's live today (source: [`site/`](site/)).
+**[→ Project site](https://governedmemory.metaworkers.ai/)** — the problem this solves, how the governance pipeline works, and what's live today (source: [`site/`](site/)). The short alias [govmem.metaworkers.ai](https://govmem.metaworkers.ai/) points to the same site.
 
 **[→ Try the hosted demo](https://demo.metaworkers.ai/)** — run the governed-write and retrieval flow in a disposable, synthetic-data sandbox; no account or local setup required.
 
@@ -262,16 +262,16 @@ Or bring up the database, API, and web console together: `docker compose -f depl
 
 A thin client for the REST API above — no third-party dependencies (stdlib `urllib.request` only), and no dependency on this repo's `core`/`api` packages, so installing it doesn't pull in Postgres/FastAPI/etc.
 
-The package is not published to PyPI yet. Install the current SDK from the
-repository in a clean environment:
+The stable SDK is published to PyPI as `0.1.0`. Install it in a clean
+environment:
 
 ```bash
-python -m pip install "git+https://github.com/Metaworkers-ai/governedmemory.git@main#subdirectory=sdk/python"
+python -m pip install "metaworkers==0.1.0"
 ```
 
 For local source changes, use `python -m pip install -e ./sdk/python` from the
-repository root. Once the first release is published, the install command will
-be `python -m pip install metaworkers`.
+repository root. The stable release is also installable without a version
+pin using `python -m pip install metaworkers`.
 
 ```python
 from metaworkers import GovernedMemory, Source
