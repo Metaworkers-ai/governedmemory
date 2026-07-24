@@ -19,6 +19,8 @@ This page separates repository changes from account-level launch operations.
   are committed.
 - Privacy-preserving adoption events and a local report generator are documented
   in [adoption-metrics.md](adoption-metrics.md).
+- The collector decision is complete: hosted analytics remains disabled; the
+  opt-in local JSONL collector and report are configured for approved operators.
 - The hosted-demo flow was verified with synthetic data; the timing and mobile
   layout verification are recorded in [hosted-sandbox.md](hosted-sandbox.md).
 
@@ -36,9 +38,9 @@ by a code commit:
    redirects from the CloudFront infrastructure URL.
 3. Publish the launch draft through the agreed channels after a maintainer has
    reviewed claims and links.
-4. Decide whether to enable an adoption collector. If enabled, accept only the
-   event contract in [adoption-metrics.md](adoption-metrics.md), with retention
-   and deletion controls documented before collection starts.
+4. If the team later wants hosted analytics, approve the endpoint owner,
+   retention, access, deletion, privacy notice, and opt-in mechanism first. Do
+   not enable a hosted collector by merely setting an environment variable.
 
 No step above requires collecting memory contents or granting public write
 access to production infrastructure.
