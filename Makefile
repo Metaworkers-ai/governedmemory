@@ -19,6 +19,9 @@ install-api:
 install-sdk:
 	pip install -e sdk/python
 
+install-agentdojo:
+	pip install -r requirements-agentdojo.txt
+
 # ── API server (E7) ───────────────────────────────────────────────────────────
 
 api:
@@ -46,15 +49,18 @@ test-unit:
 test-integration:
 	pytest tests/integration/ -v
 
+test-agentdojo-contract:
+	pytest tests/contract/ -v
+
 test:
 	pytest -v --cov=core --cov-report=term-missing
 
 # ── Code quality ──────────────────────────────────────────────────────────────
 
 lint:
-	ruff check core/ api/ tests/ sdk/python/
-	ruff format --check core/ api/ tests/ sdk/python/
+	ruff check core/ api/ tests/ sdk/python/ integrations/
+	ruff format --check core/ api/ tests/ sdk/python/ integrations/
 
 format:
-	ruff format core/ api/ tests/ sdk/python/
-	ruff check --fix core/ api/ tests/ sdk/python/
+	ruff format core/ api/ tests/ sdk/python/ integrations/
+	ruff check --fix core/ api/ tests/ sdk/python/ integrations/

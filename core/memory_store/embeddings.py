@@ -80,7 +80,7 @@ class SentenceTransformerProvider(EmbeddingProvider):
                 "Run: pip install -r requirements-embed-local.txt"
             ) from exc
         self._model = SentenceTransformer(model_name)
-        self._dims: int = self._model.get_sentence_embedding_dimension()
+        self._dims: int = self._model.get_embedding_dimension()
 
     def embed(self, text: str) -> list[float]:
         return self._model.encode(text, show_progress_bar=False).tolist()
