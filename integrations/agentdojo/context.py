@@ -35,6 +35,7 @@ class EvidenceRef:
     taint: str
     injection_score: float
     policy_id: str
+    audit_id: str | None = None
 
 
 @dataclass(frozen=True)

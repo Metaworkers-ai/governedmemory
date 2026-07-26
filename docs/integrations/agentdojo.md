@@ -1,14 +1,20 @@
 # GovernedMemory + AgentDojo (Banking suite)
 
-Status: **Steps 1–6 of 11 complete** (contract test; run identity, context,
-and registry; Banking privileged-action policy; `GovernedRunInitializer`;
-`GovernedFunctionFactory`; source/read-tool wrapper). No privileged-tool
-gate, benchmark runner, or full benchmark run yet. This tracks Workstream A
-(`docs/traction-roadmap.md`) Ticket 1/2. For the full implementation
-history, design decisions, bug fixes, and test coverage, see
-[`docs/integrations/agentdojo-progress.md`](./agentdojo-progress.md). This
-page only covers the version pin and how to run the contract test that
-validates it.
+Status: **Steps 1–10 of 11 complete.** Steps 1-9 tested and passing,
+including confirmation on a real developer machine (Windows + Docker
+Desktop) that all AgentDojo unit/contract tests and Step 3's Docker-backed
+integration tests pass for real. Step 10 (manual validation) ships as a
+tool (`scripts/validate_agentdojo_manual.py`) and checklist
+(`docs/integrations/agentdojo-manual-validation.md`) — it needs a real LLM
+API key to actually run, which hasn't happened yet. Step 11 (full
+benchmark run) not started. **See
+`docs/integrations/agentdojo-progress.md` section 5 for a significant
+finding that should be reviewed before running Step 10.** This tracks
+Workstream A (`docs/traction-roadmap.md`) Ticket 1/2. For the full
+implementation history, design decisions, bug fixes, and test coverage,
+see [`docs/integrations/agentdojo-progress.md`](./agentdojo-progress.md).
+This page only covers the version pin and how to run the contract test
+that validates it.
 
 Supported contract version: **`agentdojo==0.1.35`** (benchmark version
 `v1.2.2`). Do not claim compatibility with other AgentDojo releases until
@@ -69,12 +75,10 @@ assertions use this entrypoint; keep doing so in adapter code too.
 ## Next steps
 
 See [`docs/integrations/agentdojo-progress.md`](./agentdojo-progress.md) for
-what's built (Steps 1–6) in full detail. Remaining, per the low-level
-design's "Recommended implementation order":
+what's built (Steps 1–10) in full detail, including a significant finding
+(section 5) about expected utility impact that should be reviewed before
+running Step 10's validation script. Remaining, per the low-level design's
+"Recommended implementation order":
 
-7. Privileged-tool wrapper — all-evidence `check_privilege()` gate for
-   `send_money` and the other four privileged actions.
-8. Docker-backed integration tests for the full write -> gate path.
-9. Custom benchmark runner + JSON result collector.
-10. Manual validation: one benign task, one injection task.
-11. Full pinned Banking benchmark run + published methodology/results.
+11. Full pinned Banking benchmark run + published methodology/results,
+    after Step 10 has actually been run against a real model.

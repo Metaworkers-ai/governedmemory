@@ -1,9 +1,11 @@
 """GovernedMemory <-> AgentDojo Banking-suite integration.
 
 Status: identity + context + registry + policy + GovernedRunInitializer +
-GovernedFunctionFactory (implementation order steps 2-5). No source/
-privileged tool wrappers or benchmark runner yet -- see
-docs/integrations/agentdojo.md for what exists and what's next.
+GovernedFunctionFactory + source-tool wrapper + privileged-tool wrapper +
+custom benchmark runner (implementation order steps 2-9). Steps 10-11
+(manual validation, full benchmark run) not started -- see
+docs/integrations/agentdojo-progress.md for what exists, what's next, and
+a significant finding that should be reviewed before Step 10.
 """
 
 from integrations.agentdojo.banking_mapping import (
@@ -91,3 +93,39 @@ try:
     ]
 except ImportError:
     make_source_tool_hook = None  # type: ignore[assignment]
+
+try:
+    from integrations.agentdojo.privileged_tool_wrapper import (
+        NonPrivilegedToolMisuseError,
+        PrivilegedActionDenied,
+        make_banking_privileged_tool_hook,
+        make_privileged_tool_hook,
+    )
+
+    __all__ += [
+        "NonPrivilegedToolMisuseError",
+        "PrivilegedActionDenied",
+        "make_banking_privileged_tool_hook",
+        "make_privileged_tool_hook",
+    ]
+except ImportError:
+    make_privileged_tool_hook = None  # type: ignore[assignment]
+
+try:
+    from integrations.agentdojo.runner import (
+        build_governed_pipeline,
+        build_result_artifact,
+        make_banking_hook_selector,
+        make_governed_runtime_class,
+        run_governed_banking_task,
+    )
+
+    __all__ += [
+        "build_governed_pipeline",
+        "build_result_artifact",
+        "make_banking_hook_selector",
+        "make_governed_runtime_class",
+        "run_governed_banking_task",
+    ]
+except ImportError:
+    run_governed_banking_task = None  # type: ignore[assignment]

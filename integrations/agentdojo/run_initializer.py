@@ -118,6 +118,7 @@ class GovernedRunInitializer(BasePipelineElement):
                 taint=record.trust.taint.value,
                 injection_score=record.trust.injection_score,
                 policy_id=record.purpose.policy_id,
+                audit_id=record.audit_id,
             )
         )
         context.processed_initial_input = True
