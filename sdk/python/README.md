@@ -18,7 +18,9 @@ from metaworkers import GovernedMemory, Source
 mem = GovernedMemory(base_url="http://localhost:8000", api_key="some-secret-key")
 
 mem.write(
-    customer_id="cust-1", agent_id="cx-1", session_id="s-1",
+    customer_id="cust-1",
+    agent_id="cx-1",
+    session_id="s-1",
     content="customer prefers email contact",
     source=Source(type="user", ref="msg-1001", confidence=0.9),
     purpose=["cx_support"],
@@ -26,7 +28,10 @@ mem.write(
 
 results = mem.retrieve(
     query="how does this customer want to be contacted?",
-    agent_id="cx-1", session_id="s-1", purpose="cx_support", k=5,
+    agent_id="cx-1",
+    session_id="s-1",
+    purpose="cx_support",
+    k=5,
 )
 
 mem.quarantine("mem-uuid")
@@ -34,9 +39,9 @@ mem.delete("mem-uuid")
 events = mem.audit()
 
 # E6 — provenance lineage + cascade purge
-lineage = mem.provenance("mem-uuid")          # {memory_id, ancestors, descendants}
-plan = mem.cascade_preview("mem-uuid")        # dry run: what cascade delete would remove
-mem.delete("mem-uuid", cascade=True)          # hard-delete it and everything derived from it
+lineage = mem.provenance("mem-uuid")  # {memory_id, ancestors, descendants}
+plan = mem.cascade_preview("mem-uuid")  # dry run: what cascade delete would remove
+mem.delete("mem-uuid", cascade=True)  # hard-delete it and everything derived from it
 
 # Listing (no query/ranking/gate — plain reads)
 customers = mem.list_customers()

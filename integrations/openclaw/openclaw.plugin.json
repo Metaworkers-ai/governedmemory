@@ -1,0 +1,45 @@
+{
+  "id": "governed-memory",
+  "name": "Governed Memory",
+  "description": "Adds trust governance to agent memory: injection-scores content on write, keeps untrusted/quarantined memory out of the prompt, and blocks tool calls backed by poisoned memory.",
+  "contracts": {},
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["apiUrl", "apiKey"],
+    "properties": {
+      "apiUrl": {
+        "type": "string",
+        "description": "Governed Memory REST API base URL, e.g. http://localhost:8000"
+      },
+      "apiKey": {
+        "type": "string",
+        "description": "Bearer API key (resolves to your tenant server-side; never sent in the request body)"
+      },
+      "customerId": {
+        "type": "string",
+        "description": "Subject/customer id to scope this agent's memories under",
+        "default": "openclaw-agent"
+      },
+      "inboundSourceType": {
+        "type": "string",
+        "description": "Provenance source_type applied to inbound messages (untrusted by default, since they come from external channels)",
+        "default": "untrusted_web"
+      },
+      "sensitiveTools": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Tool names to gate. A call to one of these is blocked when the current turn is injection-flagged / quarantined. web_fetch is included by default because a poisoned turn's 'fetch <url>' is a data-exfiltration vector.",
+        "default": ["web_fetch", "send_money", "send_email", "http_request", "shell", "payment", "wire_transfer"]
+      },
+      "injectionThreshold": {
+        "type": "number",
+        "description": "Injection score at/above which a memory marks the session as poisoned (blocks sensitive tools).",
+        "default": 0.7
+      }
+    }
+  }
+}
