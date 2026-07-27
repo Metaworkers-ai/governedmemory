@@ -195,6 +195,14 @@ def main() -> None:
     store = MemoryStore(dsn, NullEmbeddingProvider(768))
 
     llm = get_llm(provider, args.model, None, "tool")
+    # agentdojo's attacks (e.g. ImportantInstructionsAttack) call
+    # get_model_name_from_pipeline(target_pipeline), which requires
+    # pipeline.name to be a string containing the model id. That's normally
+    # set by AgentPipeline.from_config() -- which we don't use, since we
+    # build the pipeline directly via build_governed_pipeline(). Set it
+    # here so any attack construction below works the same way it would
+    # against a from_config()-built pipeline.
+    llm.name = args.model
 
     suite = get_suite("v1.2.2", "banking")
     registry = RunContextRegistry()

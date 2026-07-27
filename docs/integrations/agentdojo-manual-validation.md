@@ -15,8 +15,8 @@ read-only, and why the attacked task's `utility` is expected to be
 ```bash
 docker compose -f deploy/docker-compose.yml up -d   # or: make db-up
 pip install -r requirements-agentdojo.txt
-export DATABASE_URL=postgresql://...                 # your real Postgres
-export OPENAI_API_KEY=...                             # or ANTHROPIC_API_KEY, etc.
+export DATABASE_URL=os.environ["DATABASE_URL"]                # your real Postgres
+export OPENAI_API_KEY=os.environ["OPENAI_API_KEY"]                          # or ANTHROPIC_API_KEY, etc.
 ```
 
 ## Run the recommended pair

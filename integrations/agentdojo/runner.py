@@ -310,6 +310,7 @@ def run_governed_banking_task(
             injections,
             runtime_class=governed_runtime_class,
             environment=task_environment,
+            verbose=True,
         )
 
     return build_result_artifact(
