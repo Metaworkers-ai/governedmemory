@@ -7,9 +7,10 @@ integration tests pass for real. Step 10 (manual validation) ships as a
 tool (`scripts/validate_agentdojo_manual.py`) and checklist
 (`docs/integrations/agentdojo-manual-validation.md`) — it needs a real LLM
 API key to actually run, which hasn't happened yet. Step 11 (full
-benchmark run) not started. **See
-`docs/integrations/agentdojo-progress.md` section 5 for a significant
-finding that should be reviewed before running Step 10.** This tracks
+benchmark run) not started. The integration now uses the approved Option B
+`banking-v2-content-scored-transactions` mapping: recent-transaction
+results arrive through a trusted bank channel but remain subject to
+injection scanning; `read_file` remains untrusted by source. This tracks
 Workstream A (`docs/traction-roadmap.md`) Ticket 1/2. For the full
 implementation history, design decisions, bug fixes, and test coverage,
 see [`docs/integrations/agentdojo-progress.md`](./agentdojo-progress.md).
@@ -75,9 +76,9 @@ assertions use this entrypoint; keep doing so in adapter code too.
 ## Next steps
 
 See [`docs/integrations/agentdojo-progress.md`](./agentdojo-progress.md) for
-what's built (Steps 1–10) in full detail, including a significant finding
-(section 5) about expected utility impact that should be reviewed before
-running Step 10's validation script. Remaining, per the low-level design's
+what's built (Steps 1–10) in full detail, including the section 5 decision
+to content-score recent transactions while retaining fail-closed treatment
+for file content. Remaining, per the low-level design's
 "Recommended implementation order":
 
 11. Full pinned Banking benchmark run + published methodology/results,

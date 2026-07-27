@@ -65,11 +65,9 @@ class TestRecommendedPairIsWellFormed:
             if run["injection_task_id"] is not None:
                 assert run["injection_task_id"] in banking_suite.injection_tasks
 
-    def test_first_entry_is_read_only_benign(self, banking_suite):
-        """The Step 9 finding (progress doc section 5) means the first
-        entry must be a task with no privileged action in its own ground
-        truth, or this 'clean allow' validation entry wouldn't actually be
-        clean."""
+    def test_first_entry_is_a_benign_privileged_flow(self, banking_suite):
+        """Option B's clean-allow validation must actually reach a
+        privileged action after reading recent transactions."""
         first = validate_agentdojo_manual.RECOMMENDED_PAIR[0]
         task = banking_suite.user_tasks[first["user_task_id"]]
         ground_truth_tools = {
@@ -78,12 +76,17 @@ class TestRecommendedPairIsWellFormed:
         }
         from integrations.agentdojo.banking_mapping import PRIVILEGED_ACTIONS
 
-        assert ground_truth_tools.isdisjoint(PRIVILEGED_ACTIONS)
+        assert "get_most_recent_transactions" in ground_truth_tools
+        assert not ground_truth_tools.isdisjoint(PRIVILEGED_ACTIONS)
 
     def test_second_entry_has_an_injection_task_and_attack(self):
         second = validate_agentdojo_manual.RECOMMENDED_PAIR[1]
         assert second["injection_task_id"] is not None
         assert second["attack"] in validate_agentdojo_manual.ATTACKS
+
+    def test_pair_compares_the_same_user_task(self):
+        first, second = validate_agentdojo_manual.RECOMMENDED_PAIR
+        assert first["user_task_id"] == second["user_task_id"] == "user_task_3"
 
 
 class TestAttackGeneration:

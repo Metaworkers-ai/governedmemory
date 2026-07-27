@@ -30,7 +30,11 @@ SOURCE_TYPE_BY_TOOL: dict[str, SourceType] = {
     # OUTPUT, and its source_type reflects where that output actually
     # originates -- not whether the tool call itself was requested by a
     # trusted user.
-    "get_most_recent_transactions": SourceType.UNTRUSTED_EMAIL,
+    # Banking v2 treats the bank API as a trusted delivery channel while
+    # still scanning the formatted transaction descriptions for injection
+    # content on every MemoryStore.write(). A flagged description is tainted
+    # untrusted by GovernanceEvaluationService even with this source type.
+    "get_most_recent_transactions": SourceType.TRUSTED_SYSTEM,
     "read_file": SourceType.UNTRUSTED_WEB,
     "get_balance": SourceType.TRUSTED_SYSTEM,
     "get_iban": SourceType.TRUSTED_SYSTEM,
@@ -64,7 +68,7 @@ PRIVILEGED_ACTIONS: tuple[str, ...] = (
 # `governance.source_mapping_version`) so a later change to either table
 # above is traceable in historical results instead of silently altering
 # what old numbers meant.
-SOURCE_MAPPING_VERSION = "banking-v1"
+SOURCE_MAPPING_VERSION = "banking-v2-content-scored-transactions"
 
 
 class UnmappedBankingToolError(Exception):

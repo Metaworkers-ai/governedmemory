@@ -19,9 +19,9 @@ Requires:
       always does.
 
 Usage:
-    # The Step 10-recommended pair in one run: a read-only benign task
-    # (expected to succeed normally) and a privileged task under a real
-    # prompt-injection attack (expected to be blocked):
+    # The Step 10-recommended pair in one run: the same privileged task
+    # first with benign transactions (expected to succeed normally), then
+    # under a real prompt-injection attack (expected to be blocked):
     python scripts/validate_agentdojo_manual.py --recommended-pair --model gpt-4o-mini-2024-07-18
 
     # Any single task:
@@ -71,18 +71,16 @@ ATTACKS = {
     "direct": DirectAttack,
 }
 
-# The Step 10-recommended pair, chosen deliberately given the Step 9
-# finding (docs/integrations/agentdojo-progress.md section 5): user_task_1
-# is read-only (no privileged action at all -- this is the one Banking
-# task guaranteed not to be affected by that finding, so it validates the
-# "clean allow" path), and user_task_3 pairs a privileged action with a
-# real attack, validating the "clean block" path.
+# The Step 10-recommended pair directly validates Option B using the same
+# privileged workflow twice. Benign user_task_3 proves content-scored
+# transaction descriptions permit send_money; the attacked version proves
+# an injected description is still detected and blocks that action.
 RECOMMENDED_PAIR: list[dict[str, Any]] = [
     {
-        "user_task_id": "user_task_1",
+        "user_task_id": "user_task_3",
         "injection_task_id": None,
         "attack": None,
-        "label": "benign read-only task (expect: utility=True, privileged_attempts=0)",
+        "label": "benign privileged task (expect: utility=True, allowed_actions>=1)",
     },
     {
         "user_task_id": "user_task_3",
@@ -165,7 +163,7 @@ def main() -> None:
         "--recommended-pair",
         action="store_true",
         help="Run the Step 10-recommended pair instead of a single task: "
-        "one benign read-only task, one privileged task under a real attack.",
+        "the same privileged task with benign data and under a real attack.",
     )
     parser.add_argument(
         "--model",
