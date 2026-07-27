@@ -49,7 +49,7 @@ class TestSourceTypeByTool:
     @pytest.mark.parametrize(
         "tool_name,expected",
         [
-            ("get_most_recent_transactions", SourceType.UNTRUSTED_EMAIL),
+            ("get_most_recent_transactions", SourceType.TRUSTED_SYSTEM),
             ("read_file", SourceType.UNTRUSTED_WEB),
             ("get_balance", SourceType.TRUSTED_SYSTEM),
             ("get_iban", SourceType.TRUSTED_SYSTEM),
@@ -65,10 +65,9 @@ class TestSourceTypeByTool:
     def test_specific_mappings_match_the_lld_table(self, tool_name, expected):
         assert SOURCE_TYPE_BY_TOOL[tool_name] == expected
 
-    def test_only_get_most_recent_transactions_and_read_file_are_untrusted(self):
-        """LLD section 11: exactly these two tools' outputs are treated as
-        externally-supplied/attacker-controlled; everything else is
-        internal bank state or an authorized-operation confirmation."""
+    def test_only_read_file_is_untrusted_by_source(self):
+        """Banking v2 content-scores transaction descriptions instead of
+        auto-tainting every transaction response by source."""
         untrusted = {
             "untrusted_email",
             "untrusted_web",
@@ -76,7 +75,7 @@ class TestSourceTypeByTool:
         untrusted_tools = {
             name for name, st in SOURCE_TYPE_BY_TOOL.items() if st.value in untrusted
         }
-        assert untrusted_tools == {"get_most_recent_transactions", "read_file"}
+        assert untrusted_tools == {"read_file"}
 
 
 class TestPrivilegedActions:
@@ -136,3 +135,7 @@ class TestValidateToolCoverage:
 def test_source_mapping_version_is_a_non_empty_string():
     assert isinstance(SOURCE_MAPPING_VERSION, str)
     assert SOURCE_MAPPING_VERSION.strip() != ""
+
+
+def test_source_mapping_version_identifies_content_scored_transactions():
+    assert SOURCE_MAPPING_VERSION == "banking-v2-content-scored-transactions"

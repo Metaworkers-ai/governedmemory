@@ -63,6 +63,7 @@ building each step:
 | 15 | The runner computes the task's actual environment object itself (`user_task.init_environment(raw_environment)`) *before* calling `TaskSuite.run_task_with_pipeline`, registers the context against that exact object, then passes it back in via `run_task_with_pipeline`'s `environment=` parameter | `run_task_with_pipeline` builds this object internally and never hands it to the caller beforehand, but the registry needs the *exact* object AgentDojo will actually call the pipeline with (`id()`-based lookup). This only produces the same object (not just an equal one) because every Banking user task's `init_environment` is the inherited no-op default (`return environment` unchanged) — confirmed by grep across every Banking suite version in `agentdojo==0.1.35`. If a future task ever overrides it to return a copy, the failure mode is a `RegistryMissError` → `AbortAgentError`, i.e. fail-closed, not silent |
 | 16 | `make_governed_runtime_class` wraps tools inside a `FunctionsRuntime` subclass's `__init__`, rather than the runner building a wrapped runtime instance directly | `run_task_with_pipeline` always constructs its runtime as `runtime_class(self.tools)` internally — there is no parameter to hand it an already-built `FunctionsRuntime` instance, so the wrapping has to happen inside the class AgentDojo itself instantiates |
 | 17 | Step 10 is a standalone CLI script (`scripts/validate_agentdojo_manual.py`) plus a human checklist doc, not a pytest test | The LLD's own framing — "validate... manually" — calls for human judgment on real model output (does the model behave sensibly when a tool call is denied? does the transcript look right?), which an automated assertion can't substitute for. The script is designed so everything *except* the actual LLM call and DB write is independently testable (attack-template generation is pure string formatting with no network call, confirmed directly against real `ImportantInstructionsAttack`) |
+| 18 | Option B maps `get_most_recent_transactions` to `TRUSTED_SYSTEM` and relies on the existing injection scanner to taint suspicious descriptions; `read_file` stays `UNTRUSTED_WEB` | The v1 mapping auto-tainted every transaction response and blocked almost every benign privileged Banking workflow. The bank API is treated as the delivery channel, while attacker-controlled descriptions are still scanned through the unchanged governed write path. Artifacts identify this behavior as `banking-v2-content-scored-transactions`. |
 
 ---
 
@@ -306,20 +307,18 @@ genuinely cannot run this end-to-end myself:
   AgentDojo's own `get_llm()`, using AgentDojo's real
   `ImportantInstructionsAttack` (the standard attack in the AgentDojo
   paper, not a stand-in) to generate real injection content for the
-  attacked task. `--recommended-pair` runs exactly the two tasks the
-  progress doc's section 5 finding suggests: `user_task_1` (read-only,
-  the one Banking task guaranteed clean of that finding) and `user_task_3`
-  paired with `injection_task_0` under a real attack.
+  attacked task. `--recommended-pair` runs `user_task_3` twice: once with
+  benign transactions to validate Option B's clean allow path, and once
+  paired with `injection_task_0` to validate the scanner-driven block path.
 - **`docs/integrations/agentdojo-manual-validation.md`** — the checklist
   of what to actually look for in the output and the transcripts, written
   with the section 5 finding in mind (e.g. explicitly flags that
   `utility=False` on the attacked task is *expected*, not a failure, and
   explains why).
-- **12 tests**, covering everything in the script that doesn't require a
+- **13 tests**, covering everything in the script that doesn't require a
   real API key: the recommended pair is well-formed against the real
-  Banking suite (and its first entry is verified, in code, to have no
-  privileged action in its own ground truth — not just asserted in a
-  comment), attack-template generation is exercised for real (it's pure
+  Banking suite and compares the same privileged transaction-driven task
+  with and without injection, attack-template generation is exercised for real (it's pure
   string formatting, no network call — confirmed directly against the
   real `ImportantInstructionsAttack` class), argument parsing, and report
   formatting. Also fixed a real UX bug caught while smoke-testing the
@@ -334,9 +333,9 @@ report alone.
 
 ---
 
-## 5. Critical finding — please review before Step 10
+## 5. Utility finding and Option B resolution
 
-**Under the current Step 3 source-type mapping, the Banking suite's own
+**Under the original `banking-v1` source-type mapping, the Banking suite's own
 benign ground-truth tasks are almost entirely blocked by this defense.**
 
 This surfaced while writing Step 9's tests, by running the real runner
@@ -392,7 +391,8 @@ methodology (section 16) explicitly anticipates *some* utility cost —
 nine metrics it asks to be reported separately, precisely because a
 defense like this one is expected to trade some utility for security.
 
-**What needs team attention before Step 10:** the magnitude. If
+**Decision considered before Option B was approved:** the magnitude. Under
+the original mapping, if
 `false_block_rate` for the Banking suite's "governed pipeline on benign
 user tasks" configuration (LLD section 16, config #2) is close to 100% —
 which this data suggests it will be, for any task whose ground truth
@@ -401,11 +401,11 @@ action — that's a very different result to report and interpret than a
 modest utility cost, and it may be worth discussing before spending model
 API budget on Step 10/11:
 
-- Is a near-total utility cost against this specific benchmark suite an
+- Was a near-total utility cost against this specific benchmark suite an
   expected and acceptable finding to publish as-is (i.e., "this defense
   fully closes the injection vector in this suite, at this utility cost"),
   matching the paper's likely thesis?
-- Or does the source-type mapping for `get_most_recent_transactions`
+- Or did the source-type mapping for `get_most_recent_transactions`
   specifically deserve reconsideration (e.g. content-based scoring instead
   of an unconditional untrusted source type for that one tool, since
   transaction descriptions are user-facing bank data, not literally
@@ -413,9 +413,23 @@ API budget on Step 10/11:
   change, not something to alter unilaterally without review, since the
   team already reviewed and signed off on that exact table?
 
-Either answer is legitimate; this section exists so the choice is made
-deliberately, with this data in hand, rather than discovered as a surprise
-partway through Step 11's full benchmark run.
+The team selected the second path. In
+`banking-v2-content-scored-transactions`, `get_most_recent_transactions`
+is written as `TRUSTED_SYSTEM`, describing the bank API delivery channel.
+Its formatted output still goes through `MemoryStore.write()` and the
+existing injection scanner. Benign descriptions therefore remain trusted;
+scanner-flagged descriptions become untrusted and block later privileged
+actions through the unchanged all-evidence gate.
+
+`read_file` remains `UNTRUSTED_WEB`, so legitimate tasks that require file
+content before a privileged action can still be false-blocked. The full
+benchmark must report that residual utility cost rather than implying
+Option B eliminates all false blocks.
+
+Regression coverage requires both directions: benign recent transactions
+allow the genuine `user_task_3` privileged flow, while an
+instruction-override string in recent transactions becomes untrusted
+through content scoring alone and blocks `send_money` before mutation.
 
 ---
 
