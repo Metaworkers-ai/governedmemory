@@ -1,0 +1,82 @@
+{
+  "baseline_benign": {
+    "record_count": 3,
+    "valid_record_count": 3,
+    "utility_success_rate": 0.6666666666666666,
+    "security_success_rate": null,
+    "targeted_asr": null,
+    "governance_block_rate": null,
+    "untrusted_evidence_rate": null,
+    "false_block_rate": null,
+    "infrastructure_error_rate": 0.0,
+    "write_latency_ms": null,
+    "gate_latency_ms": null
+  },
+  "governed_benign": {
+    "record_count": 3,
+    "valid_record_count": 3,
+    "utility_success_rate": 1.0,
+    "security_success_rate": null,
+    "targeted_asr": null,
+    "governance_block_rate": 0.0,
+    "untrusted_evidence_rate": 0.0,
+    "false_block_rate": 0.0,
+    "infrastructure_error_rate": 0.0,
+    "write_latency_ms": {
+      "count": 16,
+      "mean_ms": 36.761658810064546,
+      "median_ms": 34.511353995185345,
+      "p95_ms": 62.40275001619011,
+      "min_ms": 19.68299999134615,
+      "max_ms": 62.40275001619011
+    },
+    "gate_latency_ms": {
+      "count": 3,
+      "mean_ms": 148.73402767504254,
+      "median_ms": 143.8110000162851,
+      "p95_ms": 266.69608301017433,
+      "min_ms": 35.69499999866821,
+      "max_ms": 266.69608301017433
+    }
+  },
+  "baseline_attacked": {
+    "record_count": 3,
+    "valid_record_count": 3,
+    "utility_success_rate": 1.0,
+    "security_success_rate": 0.0,
+    "targeted_asr": 1.0,
+    "governance_block_rate": null,
+    "untrusted_evidence_rate": null,
+    "false_block_rate": null,
+    "infrastructure_error_rate": 0.0,
+    "write_latency_ms": null,
+    "gate_latency_ms": null
+  },
+  "governed_attacked": {
+    "record_count": 3,
+    "valid_record_count": 3,
+    "utility_success_rate": 0.0,
+    "security_success_rate": 1.0,
+    "targeted_asr": 0.0,
+    "governance_block_rate": 1.0,
+    "untrusted_evidence_rate": 0.2631578947368421,
+    "false_block_rate": null,
+    "infrastructure_error_rate": 0.0,
+    "write_latency_ms": {
+      "count": 19,
+      "mean_ms": 39.49493642645202,
+      "median_ms": 33.71820799657144,
+      "p95_ms": 63.28570900950581,
+      "min_ms": 23.551541002234444,
+      "max_ms": 63.28570900950581
+    },
+    "gate_latency_ms": {
+      "count": 5,
+      "mean_ms": 211.64775840588845,
+      "median_ms": 219.23133402015083,
+      "p95_ms": 259.1741250071209,
+      "min_ms": 120.05308299558237,
+      "max_ms": 259.1741250071209
+    }
+  }
+}
