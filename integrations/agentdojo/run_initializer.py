@@ -20,6 +20,7 @@ exists before the pipeline reaches the LLM.
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from agentdojo.agent_pipeline.base_pipeline_element import BasePipelineElement
@@ -79,6 +80,7 @@ class GovernedRunInitializer(BasePipelineElement):
             return query, runtime, env, messages, extra_args
 
         try:
+            write_started = time.perf_counter()
             record = self.store.write(
                 WriteRequest(
                     tenant_id=context.tenant_id,
@@ -93,6 +95,7 @@ class GovernedRunInitializer(BasePipelineElement):
                     purpose=Purpose(policy_id=context.policy_id),
                 )
             )
+            write_latency_ms = (time.perf_counter() - write_started) * 1000
         except Exception as exc:
             # An infrastructure failure, not a governance decision -- the
             # attempt cannot be trusted to have any evidence at all from
@@ -119,6 +122,7 @@ class GovernedRunInitializer(BasePipelineElement):
                 injection_score=record.trust.injection_score,
                 policy_id=record.purpose.policy_id,
                 audit_id=record.audit_id,
+                write_latency_ms=write_latency_ms,
             )
         )
         context.processed_initial_input = True

@@ -35,6 +35,7 @@ in between, and this is the only rule that can't be fooled by that.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -160,6 +161,7 @@ def make_privileged_tool_hook(
             )
 
         denied_memory_ids: list[str] = []
+        gate_started = time.perf_counter()
         for memory_id in evidence_ids:
             try:
                 allowed = store.check_privilege(
@@ -179,6 +181,7 @@ def make_privileged_tool_hook(
                 ) from exc
             if not allowed:
                 denied_memory_ids.append(memory_id)
+        gate_latency_ms = (time.perf_counter() - gate_started) * 1000
 
         if denied_memory_ids:
             sequence = context.next_sequence()
@@ -193,6 +196,7 @@ def make_privileged_tool_hook(
                         f"check_privilege denied against {len(denied_memory_ids)} of "
                         f"{len(evidence_ids)} evidence record(s)"
                     ),
+                    gate_latency_ms=gate_latency_ms,
                 )
             )
             raise PrivilegedActionDenied(
@@ -207,6 +211,7 @@ def make_privileged_tool_hook(
         write_sequence = context.next_sequence()
         source_ref = f"agentdojo:banking:{tool_name}:{write_sequence}"
         try:
+            write_started = time.perf_counter()
             record = store.write(
                 WriteRequest(
                     tenant_id=context.tenant_id,
@@ -218,6 +223,7 @@ def make_privileged_tool_hook(
                     purpose=Purpose(policy_id=context.policy_id),
                 )
             )
+            write_latency_ms = (time.perf_counter() - write_started) * 1000
         except Exception as exc:
             context.mark_infrastructure_error(
                 f"privileged-tool wrapper for {tool_name!r} failed to record confirmation "
@@ -238,6 +244,7 @@ def make_privileged_tool_hook(
                 injection_score=record.trust.injection_score,
                 policy_id=record.purpose.policy_id,
                 audit_id=record.audit_id,
+                write_latency_ms=write_latency_ms,
             )
         )
 
@@ -250,6 +257,7 @@ def make_privileged_tool_hook(
                 allowed=True,
                 denied_memory_ids=(),
                 reason=f"all {len(evidence_ids)} evidence record(s) allowed",
+                gate_latency_ms=gate_latency_ms,
             )
         )
 

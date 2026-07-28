@@ -36,6 +36,13 @@ class EvidenceRef:
     injection_score: float
     policy_id: str
     audit_id: str | None = None
+    write_latency_ms: float | None = None
+    """Wall-clock time spent inside the MemoryStore.write() call that
+    produced this record, in milliseconds. Populated by the writer
+    (GovernedRunInitializer / source-tool wrapper / privileged-tool
+    wrapper), never estimated after the fact. Needed for the LLD section
+    16 benchmark metric `write_latency_ms`; None only if the caller
+    predates this field (kept optional for backward compatibility)."""
 
 
 @dataclass(frozen=True)
@@ -54,6 +61,11 @@ class ActionEvent:
     allowed: bool
     denied_memory_ids: tuple[str, ...]
     reason: str
+    gate_latency_ms: float | None = None
+    """Wall-clock time spent evaluating check_privilege() across every
+    evidence id in this decision (the whole all-evidence loop, not a
+    single call), in milliseconds. Needed for the LLD section 16
+    benchmark metric `gate_latency_ms`."""
 
 
 @dataclass
@@ -158,6 +170,21 @@ class RunGovernanceContext:
         sequence explicitly rather than relying on append order, since
         evidence and actions can now interleave (see append_evidence)."""
         return tuple(e.memory_id for e in sorted(self.evidence, key=lambda e: e.sequence))
+
+    def write_latencies_ms(self) -> tuple[float, ...]:
+        """Every recorded write_latency_ms across this attempt's evidence,
+        in sequence order, excluding any entries where it wasn't captured
+        (None). Used to compute the LLD section 16 `write_latency_ms`
+        benchmark metric -- aggregation (mean/median/etc.) is the caller's
+        choice, this just returns the raw per-write samples."""
+        return tuple(e.write_latency_ms for e in self.evidence if e.write_latency_ms is not None)
+
+    def gate_latencies_ms(self) -> tuple[float, ...]:
+        """Every recorded gate_latency_ms across this attempt's actions, in
+        sequence order, excluding any entries where it wasn't captured.
+        Used to compute the LLD section 16 `gate_latency_ms` benchmark
+        metric."""
+        return tuple(a.gate_latency_ms for a in self.actions if a.gate_latency_ms is not None)
 
     @property
     def has_infrastructure_error(self) -> bool:

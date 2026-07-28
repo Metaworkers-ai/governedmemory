@@ -33,6 +33,7 @@ for the runner-wiring rule that keeps the two in sync.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -99,6 +100,7 @@ def make_source_tool_hook(
         sequence = context.next_sequence()
         source_ref = f"agentdojo:banking:{tool_name}:{sequence}"
         try:
+            write_started = time.perf_counter()
             record = store.write(
                 WriteRequest(
                     tenant_id=context.tenant_id,
@@ -113,6 +115,7 @@ def make_source_tool_hook(
                     purpose=Purpose(policy_id=context.policy_id),
                 )
             )
+            write_latency_ms = (time.perf_counter() - write_started) * 1000
         except Exception as exc:
             context.mark_infrastructure_error(
                 f"source-tool wrapper for {tool_name!r} failed to record evidence: {exc}"
@@ -132,6 +135,7 @@ def make_source_tool_hook(
                 injection_score=record.trust.injection_score,
                 policy_id=record.purpose.policy_id,
                 audit_id=record.audit_id,
+                write_latency_ms=write_latency_ms,
             )
         )
 

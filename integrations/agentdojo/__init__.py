@@ -2,10 +2,10 @@
 
 Status: identity + context + registry + policy + GovernedRunInitializer +
 GovernedFunctionFactory + source-tool wrapper + privileged-tool wrapper +
-custom benchmark runner (implementation order steps 2-9). Steps 10-11
-(manual validation, full benchmark run) not started -- see
-docs/integrations/agentdojo-progress.md for what exists, what's next, and
-a significant finding that should be reviewed before Step 10.
+custom benchmark runner + baseline (ungoverned) runner + benchmark metrics
+(implementation order steps 2-11). See docs/integrations/agentdojo-progress.md
+for the full history, including the Option B content-scoring fix and the
+security-semantics bug found during Step 10 validation.
 """
 
 from integrations.agentdojo.banking_mapping import (
@@ -16,6 +16,11 @@ from integrations.agentdojo.banking_mapping import (
     validate_tool_coverage,
 )
 from integrations.agentdojo.banking_policy import ensure_banking_policy
+from integrations.agentdojo.benchmark import (
+    CONFIGURATIONS,
+    compute_metrics,
+    compute_metrics_by_configuration,
+)
 from integrations.agentdojo.context import ActionEvent, EvidenceRef, RunGovernanceContext
 from integrations.agentdojo.identity import RunIdentity, generate_run_identity
 from integrations.agentdojo.registry import (
@@ -41,6 +46,9 @@ __all__ = [
     "UnmappedBankingToolError",
     "validate_tool_coverage",
     "ensure_banking_policy",
+    "CONFIGURATIONS",
+    "compute_metrics",
+    "compute_metrics_by_configuration",
 ]
 
 # function_factory.py and run_initializer.py both import real `agentdojo`
@@ -113,10 +121,13 @@ except ImportError:
 
 try:
     from integrations.agentdojo.runner import (
+        build_baseline_pipeline,
+        build_baseline_result_artifact,
         build_governed_pipeline,
         build_result_artifact,
         make_banking_hook_selector,
         make_governed_runtime_class,
+        run_baseline_banking_task,
         run_governed_banking_task,
     )
 
@@ -126,6 +137,9 @@ try:
         "make_banking_hook_selector",
         "make_governed_runtime_class",
         "run_governed_banking_task",
+        "build_baseline_pipeline",
+        "build_baseline_result_artifact",
+        "run_baseline_banking_task",
     ]
 except ImportError:
     run_governed_banking_task = None  # type: ignore[assignment]

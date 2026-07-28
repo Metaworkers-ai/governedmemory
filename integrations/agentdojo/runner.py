@@ -197,6 +197,8 @@ def build_result_artifact(
             "memory_ids": [e.memory_id for e in context.evidence],
             "audit_ids": [e.audit_id for e in context.evidence if e.audit_id is not None],
             "source_mapping_version": SOURCE_MAPPING_VERSION,
+            "write_latencies_ms": list(context.write_latencies_ms()),
+            "gate_latencies_ms": list(context.gate_latencies_ms()),
         },
         "status": "infrastructure_error" if context.has_infrastructure_error else "completed",
         "infrastructure_errors": list(context.infrastructure_errors),
@@ -321,6 +323,125 @@ def run_governed_banking_task(
         user_task_id=user_task.ID,
         injection_task_id=injection_task.ID if injection_task is not None else None,
         model=model or agent_id,
+        seed=seed,
+        utility=utility,
+        security=security if injection_task is not None else None,
+    )
+
+
+def build_baseline_pipeline(
+    llm: BasePipelineElement,
+    *,
+    system_message: str | None = None,
+    tool_output_formatter: ToolOutputFormatter = tool_result_to_str,
+    max_iters: int = 15,
+) -> AgentPipeline:
+    """Build the *ungoverned* baseline pipeline for LLD section 16's
+    configurations 1 and 3 ("Baseline AgentDojo pipeline without
+    GovernedMemory" / "Baseline pipeline with injection tasks"):
+
+        SystemMessage -> InitQuery -> LLM -> ToolsExecutionLoop([ToolsExecutor(formatter), LLM])
+
+    Identical to `build_governed_pipeline()` with `GovernedRunInitializer`
+    removed and nothing else touched -- same `SystemMessage`, same
+    `ToolsExecutor`, same formatter default -- so the only variable
+    between a baseline run and a governed run of the same task is whether
+    GovernedMemory is in the loop at all, not some other pipeline
+    difference sneaking in as a confound.
+    """
+    return AgentPipeline(
+        [
+            SystemMessage(system_message or _DEFAULT_SYSTEM_MESSAGE),
+            InitQuery(),
+            llm,
+            ToolsExecutionLoop([ToolsExecutor(tool_output_formatter), llm], max_iters=max_iters),
+        ]
+    )
+
+
+def build_baseline_result_artifact(
+    *,
+    agentdojo_version: str,
+    benchmark_version: str,
+    suite: str,
+    user_task_id: str,
+    injection_task_id: str | None,
+    model: str,
+    seed: int,
+    utility: bool,
+    security: bool | None,
+) -> dict[str, Any]:
+    """Build one JSON-serializable result record for a *baseline* (ungoverned)
+    task attempt -- same top-level shape as `build_result_artifact()` so a
+    benchmark aggregator can treat governed and baseline records uniformly,
+    but `governance` is `None` and `tenant_id`/`session_id` don't apply
+    (nothing was written to GovernedMemory)."""
+    return {
+        "agentdojo_version": agentdojo_version,
+        "benchmark_version": benchmark_version,
+        "suite": suite,
+        "user_task_id": user_task_id,
+        "injection_task_id": injection_task_id,
+        "model": model,
+        "seed": seed,
+        "tenant_id": None,
+        "session_id": None,
+        "agentdojo": {
+            "utility": utility,
+            "security": security,
+        },
+        "governance": None,
+        "status": "completed",
+        "infrastructure_errors": [],
+    }
+
+
+def run_baseline_banking_task(
+    suite: TaskSuite,
+    user_task: BaseUserTask,
+    injection_task: BaseInjectionTask | None,
+    injections: dict[str, str],
+    llm: BasePipelineElement,
+    *,
+    model: str,
+    seed: int = 0,
+    agentdojo_version: str = "0.1.35",
+    system_message: str | None = None,
+    tool_output_formatter: ToolOutputFormatter = tool_result_to_str,
+    max_iters: int = 15,
+) -> dict[str, Any]:
+    """Run exactly one *ungoverned* Banking task attempt end-to-end and
+    return its result artifact -- LLD section 16's configurations 1 and 3.
+
+    No `MemoryStore`, no identity, no registry, no wrapped tools: AgentDojo's
+    own default `FunctionsRuntime` runs the suite's plain `suite.tools`
+    completely unmodified. This is the control for measuring what
+    GovernedMemory actually costs and blocks, so it must not share any
+    governance-adjacent code path with `run_governed_banking_task()` beyond
+    the identical `SystemMessage`/`ToolsExecutor`/formatter construction in
+    `build_baseline_pipeline()`.
+    """
+    pipeline = build_baseline_pipeline(
+        llm,
+        system_message=system_message,
+        tool_output_formatter=tool_output_formatter,
+        max_iters=max_iters,
+    )
+
+    utility, security = suite.run_task_with_pipeline(
+        pipeline,
+        user_task,
+        injection_task,
+        injections,
+    )
+
+    return build_baseline_result_artifact(
+        agentdojo_version=agentdojo_version,
+        benchmark_version=".".join(str(part) for part in suite.benchmark_version),
+        suite=suite.name,
+        user_task_id=user_task.ID,
+        injection_task_id=injection_task.ID if injection_task is not None else None,
+        model=model,
         seed=seed,
         utility=utility,
         security=security if injection_task is not None else None,

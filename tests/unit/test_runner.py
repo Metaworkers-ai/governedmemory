@@ -40,9 +40,12 @@ from core.models import (  # noqa: E402
 from integrations.agentdojo.banking_mapping import UnmappedBankingToolError  # noqa: E402
 from integrations.agentdojo.registry import RunContextRegistry  # noqa: E402
 from integrations.agentdojo.runner import (  # noqa: E402
+    build_baseline_pipeline,
+    build_baseline_result_artifact,
     build_governed_pipeline,
     build_result_artifact,
     make_governed_runtime_class,
+    run_baseline_banking_task,
     run_governed_banking_task,
 )
 
@@ -588,3 +591,121 @@ class TestRunGovernedBankingTaskEndToEnd:
         )
 
         assert result_a["tenant_id"] != result_b["tenant_id"]
+
+
+class TestBuildBaselinePipeline:
+    def test_element_sequence_has_no_governed_run_initializer(self):
+        llm = GroundTruthPipeline(None)
+        pipeline = build_baseline_pipeline(llm)
+
+        kinds = [type(e).__name__ for e in pipeline.elements]
+        assert kinds == ["SystemMessage", "InitQuery", "GroundTruthPipeline", "ToolsExecutionLoop"]
+        assert "GovernedRunInitializer" not in kinds
+
+    def test_shares_the_same_default_system_message_as_the_governed_pipeline(self):
+        baseline = build_baseline_pipeline(GroundTruthPipeline(None))
+        governed = build_governed_pipeline(
+            FakePolicyAwareStore(), GroundTruthPipeline(None), registry=RunContextRegistry()
+        )
+
+        assert baseline.elements[0].system_message == governed.elements[0].system_message
+
+
+class TestBuildBaselineResultArtifact:
+    def test_shape_has_no_governance_block(self):
+        artifact = build_baseline_result_artifact(
+            agentdojo_version="0.1.35",
+            benchmark_version="1.2.2",
+            suite="banking",
+            user_task_id="user_task_3",
+            injection_task_id=None,
+            model="test-model",
+            seed=0,
+            utility=True,
+            security=None,
+        )
+
+        assert artifact["governance"] is None
+        assert artifact["tenant_id"] is None
+        assert artifact["session_id"] is None
+        assert artifact["status"] == "completed"
+        assert artifact["agentdojo"] == {"utility": True, "security": None}
+
+
+class TestRunBaselineBankingTask:
+    """The control path for LLD section 16 configs 1 and 3 -- no
+    MemoryStore, no governance, AgentDojo's own default runtime running
+    suite.tools completely unmodified."""
+
+    def test_user_task_3_succeeds_at_the_baseline(self, banking_suite):
+        """Proves the baseline (ungoverned) control path works for a real
+        task with a privileged action in its ground truth. On the original
+        `banking-v1` mapping, this same task was blocked when governed
+        (see the pre-Option-B history in the progress doc's section 5) --
+        with `banking-v2-content-scored-transactions` (Option B), the
+        governed path now allows this task too
+        (TestRunGovernedBankingTaskEndToEnd::test_user_task_3_benign_ground_truth_is_allowed),
+        so this baseline result is no longer a contrasting "governed
+        blocks it, baseline doesn't" case on this branch -- it's simply
+        confirmation that the ungoverned control path itself is correct."""
+        user_task = banking_suite.user_tasks["user_task_3"]
+        llm = GroundTruthPipeline(user_task)
+
+        result = run_baseline_banking_task(
+            banking_suite,
+            user_task,
+            None,
+            banking_suite.get_injection_vector_defaults(),
+            llm,
+            model="test-model",
+        )
+
+        assert result["agentdojo"]["utility"] is True
+        assert result["governance"] is None
+
+    def test_read_only_task_also_succeeds_at_baseline(self, banking_suite):
+        user_task = banking_suite.user_tasks["user_task_1"]
+        llm = GroundTruthPipeline(user_task)
+
+        result = run_baseline_banking_task(
+            banking_suite,
+            user_task,
+            None,
+            banking_suite.get_injection_vector_defaults(),
+            llm,
+            model="test-model",
+        )
+
+        assert result["agentdojo"]["utility"] is True
+
+    def test_injection_task_populates_security_key(self, banking_suite):
+        user_task = banking_suite.user_tasks["user_task_1"]
+        injection_task = banking_suite.injection_tasks["injection_task_0"]
+        llm = GroundTruthPipeline(user_task)
+
+        result = run_baseline_banking_task(
+            banking_suite,
+            user_task,
+            injection_task,
+            banking_suite.get_injection_vector_defaults(),
+            llm,
+            model="test-model",
+        )
+
+        assert result["injection_task_id"] == "injection_task_0"
+        assert isinstance(result["agentdojo"]["security"], bool)
+
+    def test_no_injection_task_leaves_security_none(self, banking_suite):
+        user_task = banking_suite.user_tasks["user_task_1"]
+        llm = GroundTruthPipeline(user_task)
+
+        result = run_baseline_banking_task(
+            banking_suite,
+            user_task,
+            None,
+            banking_suite.get_injection_vector_defaults(),
+            llm,
+            model="test-model",
+        )
+
+        assert result["agentdojo"]["security"] is None
