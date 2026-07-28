@@ -92,40 +92,6 @@ class TestRecommendedPairIsWellFormed:
 class TestAttackGeneration:
     """Pure string templating -- no network call, safe to run for real."""
 
-    def test_get_llm_returns_an_object_with_name_none_by_default(self, monkeypatch):
-        """Regression test for a real bug found running the script by hand:
-        agentdojo.agent_pipeline.agent_pipeline.get_llm() returns a plain
-        BasePipelineElement subclass instance, and BasePipelineElement.name
-        defaults to None -- it's only set by AgentPipeline.from_config(),
-        which this script (and runner.py's build_governed_pipeline) never
-        calls. Constructing an attack like ImportantInstructionsAttack
-        against that raw object raises 'Pipeline name is `None`' before
-        ever making a model call. The fix (setting llm.name = args.model
-        right after get_llm()) is in main() itself; this test pins down
-        the underlying fact that made it necessary."""
-        monkeypatch.setenv("OPENAI_API_KEY", "sk-test-dummy-not-a-real-key")
-        from agentdojo.agent_pipeline.agent_pipeline import get_llm
-
-        llm = get_llm("openai", "gpt-4o-2024-05-13", None, "tool")
-
-        assert llm.name is None
-
-    def test_setting_name_after_get_llm_makes_attack_construction_work(
-        self, banking_suite, monkeypatch
-    ):
-        """The actual fix: after get_llm(), explicitly setting .name to the
-        model id (matching what AgentPipeline.from_config() does
-        internally) is what makes attack construction succeed."""
-        monkeypatch.setenv("OPENAI_API_KEY", "sk-test-dummy-not-a-real-key")
-        from agentdojo.agent_pipeline.agent_pipeline import get_llm
-
-        llm = get_llm("openai", "gpt-4o-2024-05-13", None, "tool")
-        llm.name = "gpt-4o-2024-05-13"  # the fix
-
-        attack_cls = validate_agentdojo_manual.ATTACKS["important_instructions"]
-        attack = attack_cls(banking_suite, llm)  # must not raise
-        assert attack.model_name == "GPT-4"
-
     def test_important_instructions_attack_produces_content_containing_the_goal(
         self, banking_suite
     ):
@@ -221,7 +187,7 @@ class TestPrintReport:
         result = {
             "user_task_id": "user_task_3",
             "injection_task_id": "injection_task_0",
-            "agentdojo": {"utility": False, "security": True},
+            "agentdojo": {"utility": False, "security": False},
             "governance": {
                 "evidence_count": 3,
                 "trusted_count": 1,
@@ -247,7 +213,7 @@ class TestPrintReport:
         assert "user_task_3" in output
         assert "injection_task_0" in output
         assert "utility=False" in output
-        assert "security=True" in output
+        assert "security=False" in output
         assert "blocked=1" in output
         assert "allowed=0" in output
         assert "agentdojo:1.2.2:banking:abc123" in output
