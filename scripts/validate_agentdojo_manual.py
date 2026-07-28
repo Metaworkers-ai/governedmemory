@@ -172,6 +172,12 @@ def main() -> None:
     )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
+        "--detection-backend",
+        choices=("heuristic", "classifier", "ensemble"),
+        default="ensemble",
+        help="Injection detector used by governed writes (default: ensemble).",
+    )
+    parser.add_argument(
         "--out", default=None, help="Write the result artifact(s) as JSON to this path."
     )
     args = parser.parse_args()
@@ -188,6 +194,7 @@ def main() -> None:
         )
 
     load_dotenv()
+    os.environ["DETECTION_BACKEND"] = args.detection_backend
     dsn = os.environ["DATABASE_URL"]
     init_db(dsn)
     store = MemoryStore(dsn, NullEmbeddingProvider(768))

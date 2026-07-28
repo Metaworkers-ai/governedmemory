@@ -152,6 +152,11 @@ class TestArgumentParsing:
         parser.add_argument("--recommended-pair", action="store_true")
         parser.add_argument("--model", required=True)
         parser.add_argument("--seed", type=int, default=0)
+        parser.add_argument(
+            "--detection-backend",
+            choices=("heuristic", "classifier", "ensemble"),
+            default="ensemble",
+        )
         parser.add_argument("--out", default=None)
         return parser
 
@@ -165,6 +170,7 @@ class TestArgumentParsing:
         args = parser.parse_args(["--recommended-pair", "--model", "gpt-4o-mini-2024-07-18"])
         assert args.recommended_pair is True
         assert args.user_task_id is None
+        assert args.detection_backend == "ensemble"
 
     def test_single_task_mode_parses(self):
         parser = self._build_parser()

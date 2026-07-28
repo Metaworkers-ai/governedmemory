@@ -29,6 +29,13 @@ reach the LLM through). So this wrapper takes the *same* formatter
 callable the runner configured for its `ToolsExecutor` and applies it
 itself, independently, before writing -- see `docs/integrations/agentdojo.md`
 for the runner-wiring rule that keeps the two in sync.
+
+List-shaped results are written one record at a time. Scoring a complete
+transaction list as one document lets surrounding benign transactions
+dilute a malicious record's classifier signal. Per-record writes preserve
+the complete ordered output in the audit trail while ensuring every item
+is scored independently. Empty lists still produce one evidence write so
+the tool call is auditable.
 """
 
 from __future__ import annotations
@@ -51,6 +58,16 @@ from integrations.agentdojo.context import EvidenceRef, RunGovernanceContext
 from integrations.agentdojo.function_factory import GovernanceInfrastructureError, GovernedRunHook
 
 ToolOutputFormatter = Callable[[FunctionReturnType], str]
+
+
+def _evidence_contents(
+    raw_result: FunctionReturnType,
+    formatter: ToolOutputFormatter,
+) -> tuple[str, ...]:
+    """Return the independently-scored evidence payloads for a tool result."""
+    if isinstance(raw_result, list) and raw_result:
+        return tuple(formatter(item) for item in raw_result)
+    return (formatter(raw_result),)
 
 
 def make_source_tool_hook(
@@ -79,8 +96,9 @@ def make_source_tool_hook(
       raises propagate completely untouched -- a tool that fails on its
       own terms is not a governance event, and there is no raw result to
       write as evidence in that case.
-    - Reserves a sequence number and writes the formatted result as
-      evidence *before* returning to the caller, so any tool call made
+    - Writes every item of a non-empty list result as independent evidence;
+      scalar and empty-list results produce one evidence write. Writes happen
+      *before* returning to the caller, so any tool call made
       later in the same assistant-message batch (see the Step 1 contract
       test's batching proof) sees this evidence already recorded.
     - Raises `GovernanceInfrastructureError` (never touches `AbortAgentError`
@@ -100,49 +118,48 @@ def make_source_tool_hook(
                 "infrastructure error"
             )
         raw_result = original_run(**kwargs)  # let the tool's own errors propagate untouched
-        formatted_result = formatter(raw_result)
+        for content in _evidence_contents(raw_result, formatter):
+            sequence = context.next_sequence()
+            source_ref = f"agentdojo:banking:{tool_name}:{sequence}"
+            try:
+                write_started = time.perf_counter()
+                record = store.write(
+                    WriteRequest(
+                        tenant_id=context.tenant_id,
+                        customer_id=context.customer_id,
+                        agent_id=context.agent_id,
+                        session_id=context.session_id,
+                        content=content,
+                        provenance=Provenance(
+                            source_type=source_type,
+                            source_ref=source_ref,
+                        ),
+                        purpose=Purpose(policy_id=context.policy_id),
+                    )
+                )
+                write_latency_ms = (time.perf_counter() - write_started) * 1000
+            except Exception as exc:
+                context.mark_infrastructure_error(
+                    f"source-tool wrapper for {tool_name!r} failed to record evidence: {exc}"
+                )
+                raise GovernanceInfrastructureError(
+                    f"failed to record {tool_name!r} output as governed evidence: {exc}"
+                ) from exc
 
-        sequence = context.next_sequence()
-        source_ref = f"agentdojo:banking:{tool_name}:{sequence}"
-        try:
-            write_started = time.perf_counter()
-            record = store.write(
-                WriteRequest(
-                    tenant_id=context.tenant_id,
-                    customer_id=context.customer_id,
-                    agent_id=context.agent_id,
-                    session_id=context.session_id,
-                    content=formatted_result,
-                    provenance=Provenance(
-                        source_type=source_type,
-                        source_ref=source_ref,
-                    ),
-                    purpose=Purpose(policy_id=context.policy_id),
+            context.append_evidence(
+                EvidenceRef(
+                    memory_id=record.id,
+                    sequence=sequence,
+                    source_kind="tool_output",
+                    tool_name=tool_name,
+                    source_ref=record.provenance.source_ref,
+                    taint=record.trust.taint.value,
+                    injection_score=record.trust.injection_score,
+                    policy_id=record.purpose.policy_id,
+                    audit_id=record.audit_id,
+                    write_latency_ms=write_latency_ms,
                 )
             )
-            write_latency_ms = (time.perf_counter() - write_started) * 1000
-        except Exception as exc:
-            context.mark_infrastructure_error(
-                f"source-tool wrapper for {tool_name!r} failed to record evidence: {exc}"
-            )
-            raise GovernanceInfrastructureError(
-                f"failed to record {tool_name!r} output as governed evidence: {exc}"
-            ) from exc
-
-        context.append_evidence(
-            EvidenceRef(
-                memory_id=record.id,
-                sequence=sequence,
-                source_kind="tool_output",
-                tool_name=tool_name,
-                source_ref=record.provenance.source_ref,
-                taint=record.trust.taint.value,
-                injection_score=record.trust.injection_score,
-                policy_id=record.purpose.policy_id,
-                audit_id=record.audit_id,
-                write_latency_ms=write_latency_ms,
-            )
-        )
 
         return raw_result
 

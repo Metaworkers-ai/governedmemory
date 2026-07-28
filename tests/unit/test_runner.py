@@ -366,7 +366,7 @@ class TestBuildResultArtifact:
         assert artifact["governance"]["audit_ids"] == ["audit-1", "audit-2"]
         assert (
             artifact["governance"]["source_mapping_version"]
-            == "banking-v2-content-scored-transactions"
+            == "banking-v3-per-record-scored-outputs"
         )
         assert artifact["governance"]["gate_policy"] == "tool_outputs_only"
         assert artifact["status"] == "completed"
@@ -509,9 +509,9 @@ class TestRunGovernedBankingTaskEndToEnd:
             agent_id="test-agent",
         )
 
-        # Initial prompt + benign content-scored transaction result.
-        assert result["governance"]["evidence_count"] == 2
-        assert result["governance"]["trusted_count"] == 2
+        # Initial prompt + every independently-scored transaction record.
+        assert result["governance"]["evidence_count"] >= 2
+        assert result["governance"]["trusted_count"] == result["governance"]["evidence_count"]
         assert result["governance"]["untrusted_count"] == 0
 
     def test_registry_is_cleaned_up_after_the_attempt(self, banking_suite):
@@ -660,7 +660,7 @@ class TestRunBaselineBankingTask:
         task with a privileged action in its ground truth. On the original
         `banking-v1` mapping, this same task was blocked when governed
         (see the pre-Option-B history in the progress doc's section 5) --
-        with `banking-v2-content-scored-transactions` (Option B), the
+        with `banking-v3-per-record-scored-outputs` (Option B), the
         governed path now allows this task too
         (TestRunGovernedBankingTaskEndToEnd::test_user_task_3_benign_ground_truth_is_allowed),
         so this baseline result is no longer a contrasting "governed

@@ -1,16 +1,16 @@
 # GovernedMemory + AgentDojo (Banking suite)
 
-Status: **Steps 1–10 of 11 complete.** Steps 1-9 tested and passing,
-including confirmation on a real developer machine (Windows + Docker
-Desktop) that all AgentDojo unit/contract tests and Step 3's Docker-backed
-integration tests pass for real. Step 10 (manual validation) ships as a
-tool (`scripts/validate_agentdojo_manual.py`) and checklist
-(`docs/integrations/agentdojo-manual-validation.md`) — it needs a real LLM
-API key to actually run, which hasn't happened yet. Step 11 (full
-benchmark run) not started. The integration now uses the approved Option B
-`banking-v2-content-scored-transactions` mapping: recent-transaction
-results arrive through a trusted bank channel but remain subject to
-injection scanning; `read_file` remains untrusted by source. This tracks
+Status: **Step 11 targeted validation passed; full sweep remains pending.**
+Three live repetitions against `gpt-4o-2024-05-13` produced governed-benign
+utility `1.0`, false-block rate `0.0`, governed-attacked ASR `0.0`, and
+infrastructure-error rate `0.0`. The integration uses the Option B
+`banking-v3-per-record-scored-outputs` mapping:
+recent-transaction results arrive through a trusted bank channel but each
+list item is written and injection-scored independently, preventing benign
+records from diluting an injected record. `read_file` remains untrusted by
+source. Historical smoke artifacts produced under earlier mapping versions
+must not be used to validate v3. Current targeted artifacts are under
+`results/option-b-v3-targeted-r3/`. This tracks
 Workstream A (`docs/traction-roadmap.md`) Ticket 1/2. For the full
 implementation history, design decisions, bug fixes, and test coverage,
 see [`docs/integrations/agentdojo-progress.md`](./agentdojo-progress.md).
@@ -21,6 +21,10 @@ The default AgentDojo gate checks attacker-reachable tool outputs while
 still persisting, scanning, and auditing the benchmark-authored initial
 task. Use `--include-user-input-in-gate` in the Step 11 runner to reproduce
 the older strict all-evidence comparison policy.
+
+The AgentDojo validation and benchmark CLIs default to
+`--detection-backend ensemble`. The heuristic backend alone does not detect
+AgentDojo's indirect “important message” attack style.
 
 Supported contract version: **`agentdojo==0.1.35`** (benchmark version
 `v1.2.2`). Do not claim compatibility with other AgentDojo releases until

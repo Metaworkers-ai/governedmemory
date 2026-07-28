@@ -88,7 +88,7 @@ def _wire(store, hook, context=None):
 
 
 class TestWritesFormattedOutputAsEvidence:
-    def test_writes_exactly_one_evidence_record(self):
+    def test_writes_each_list_item_as_independent_evidence(self):
         store = FakeStore()
         hook = make_source_tool_hook(
             store, "get_most_recent_transactions", SourceType.UNTRUSTED_EMAIL
@@ -97,9 +97,9 @@ class TestWritesFormattedOutputAsEvidence:
 
         runtime.run_function(env, "_get_most_recent_transactions", {}, raise_on_error=True)
 
-        assert len(store.writes) == 1
+        assert len(store.writes) == 2
 
-    def test_write_content_is_the_formatted_result_not_the_raw_one(self):
+    def test_write_content_preserves_every_formatted_list_item_in_order(self):
         store = FakeStore()
         hook = make_source_tool_hook(
             store, "get_most_recent_transactions", SourceType.UNTRUSTED_EMAIL
@@ -109,10 +109,65 @@ class TestWritesFormattedOutputAsEvidence:
         runtime.run_function(env, "_get_most_recent_transactions", {}, raise_on_error=True)
 
         expected_raw = _get_most_recent_transactions()
-        assert store.writes[0].content == tool_result_to_str(expected_raw)
-        assert store.writes[0].content != str(
-            expected_raw
-        )  # sanity: formatting actually changes it
+        assert [write.content for write in store.writes] == [
+            tool_result_to_str(item) for item in expected_raw
+        ]
+
+    def test_scalar_result_still_produces_one_evidence_write(self):
+        def _get_balance() -> float:
+            """Gets the current balance.
+
+            :return: account balance.
+            """
+            return 1234.56
+
+        store = FakeStore()
+        registry = RunContextRegistry()
+        env = EmptyEnv()
+        registry.register(env, _context())
+        runtime = FunctionsRuntime(
+            [
+                GovernedFunctionFactory(registry).wrap(
+                    make_function(_get_balance),
+                    hook=make_source_tool_hook(store, "get_balance", SourceType.TRUSTED_SYSTEM),
+                )
+            ]
+        )
+
+        runtime.run_function(env, "_get_balance", {}, raise_on_error=True)
+
+        assert len(store.writes) == 1
+        assert store.writes[0].content == tool_result_to_str(1234.56)
+
+    def test_empty_list_still_produces_one_auditable_evidence_write(self):
+        def _get_no_transactions() -> list[str]:
+            """Gets an empty transaction list.
+
+            :return: no transactions.
+            """
+            return []
+
+        store = FakeStore()
+        registry = RunContextRegistry()
+        env = EmptyEnv()
+        registry.register(env, _context())
+        runtime = FunctionsRuntime(
+            [
+                GovernedFunctionFactory(registry).wrap(
+                    make_function(_get_no_transactions),
+                    hook=make_source_tool_hook(
+                        store,
+                        "get_most_recent_transactions",
+                        SourceType.TRUSTED_SYSTEM,
+                    ),
+                )
+            ]
+        )
+
+        runtime.run_function(env, "_get_no_transactions", {}, raise_on_error=True)
+
+        assert len(store.writes) == 1
+        assert store.writes[0].content == tool_result_to_str([])
 
     def test_source_ref_embeds_tool_name_and_sequence(self):
         store = FakeStore()
@@ -168,7 +223,7 @@ class TestEvidenceBookkeeping:
 
         runtime.run_function(env, "_get_most_recent_transactions", {}, raise_on_error=True)
 
-        assert len(context.evidence) == 1
+        assert len(context.evidence) == 2
         ref = context.evidence[0]
         assert ref.source_kind == "tool_output"
         assert ref.tool_name == "get_most_recent_transactions"
@@ -187,9 +242,9 @@ class TestEvidenceBookkeeping:
         runtime.run_function(env, "_get_most_recent_transactions", {}, raise_on_error=True)
         runtime.run_function(env, "_get_most_recent_transactions", {}, raise_on_error=True)
 
-        assert [e.sequence for e in context.evidence] == [0, 1]
+        assert [e.sequence for e in context.evidence] == [0, 1, 2, 3]
         assert store.writes[0].provenance.source_ref.endswith(":0")
-        assert store.writes[1].provenance.source_ref.endswith(":1")
+        assert store.writes[-1].provenance.source_ref.endswith(":3")
 
 
 class TestFailClosedOnWriteFailure:
@@ -197,7 +252,7 @@ class TestFailClosedOnWriteFailure:
         store = FakeStore()
         context = _context()
         context.mark_infrastructure_error("earlier write failed")
-        runtime, env = _wire(
+        runtime, env, _ = _wire(
             store,
             make_source_tool_hook(store, "get_most_recent_transactions", SourceType.TRUSTED_SYSTEM),
             context,

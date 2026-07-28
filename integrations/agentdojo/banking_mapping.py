@@ -68,7 +68,7 @@ PRIVILEGED_ACTIONS: tuple[str, ...] = (
 # `governance.source_mapping_version`) so a later change to either table
 # above is traceable in historical results instead of silently altering
 # what old numbers meant.
-SOURCE_MAPPING_VERSION = "banking-v2-content-scored-transactions"
+SOURCE_MAPPING_VERSION = "banking-v3-per-record-scored-outputs"
 
 
 class UnmappedBankingToolError(Exception):

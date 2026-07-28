@@ -137,5 +137,5 @@ def test_source_mapping_version_is_a_non_empty_string():
     assert SOURCE_MAPPING_VERSION.strip() != ""
 
 
-def test_source_mapping_version_identifies_content_scored_transactions():
-    assert SOURCE_MAPPING_VERSION == "banking-v2-content-scored-transactions"
+def test_source_mapping_version_identifies_per_record_scoring():
+    assert SOURCE_MAPPING_VERSION == "banking-v3-per-record-scored-outputs"

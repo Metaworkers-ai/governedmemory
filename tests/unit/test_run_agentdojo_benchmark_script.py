@@ -173,7 +173,7 @@ class TestMethodologyReport:
             "detection_backend": "ensemble",
             "injection_threshold": 0.7,
             "classifier_sha256": "deadbeef",
-            "source_mapping_version": "banking-v2-content-scored-transactions",
+            "source_mapping_version": "banking-v3-per-record-scored-outputs",
             "gate_policy": "tool_outputs_only",
         }
 

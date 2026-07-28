@@ -488,6 +488,12 @@ def main() -> None:
     )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
+        "--detection-backend",
+        choices=("heuristic", "classifier", "ensemble"),
+        default="ensemble",
+        help="Injection detector used by governed writes (default: ensemble).",
+    )
+    parser.add_argument(
         "--repetitions",
         type=int,
         default=1,
@@ -528,6 +534,7 @@ def main() -> None:
         parser.error(f"unknown configuration(s) {sorted(unknown)}; valid: {CONFIGURATIONS}")
 
     load_dotenv()
+    os.environ["DETECTION_BACKEND"] = args.detection_backend
     dsn = os.environ["DATABASE_URL"]
     init_db(dsn)
     store = MemoryStore(dsn, NullEmbeddingProvider(768))
