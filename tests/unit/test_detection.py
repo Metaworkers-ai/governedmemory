@@ -19,6 +19,7 @@ from core.detection import (
     split_examples,
 )
 from core.detection.classifier import tokenize
+from core.detection.scanner import combine_detection_scores
 from core.write_governor import scan_for_injection
 
 INJECTION_THRESHOLD = 0.7
@@ -135,6 +136,18 @@ class TestInjectionClassifier:
         assert a is b
         assert a.is_fitted
 
+    @pytest.mark.parametrize(
+        "content",
+        [
+            "Can you please pay my water bill?",
+            "Please send my share of dinner to a friend.",
+            "Could you update my mailing address?",
+            "Please check my recent transactions.",
+        ],
+    )
+    def test_default_classifier_does_not_flag_polite_banking_requests(self, content):
+        assert get_default_classifier().predict_proba(content) < INJECTION_THRESHOLD
+
 
 # ---------------------------------------------------------------------------
 # metrics.py
@@ -199,7 +212,7 @@ class TestEvaluate:
         clf = InjectionClassifier()
         clf.train(train)
 
-        metrics = evaluate(clf.predict_proba, test, threshold=0.5)
+        metrics = evaluate(clf.predict_proba, test, threshold=INJECTION_THRESHOLD)
         assert metrics.precision >= 0.7
         assert metrics.recall >= 0.7
 
@@ -271,3 +284,12 @@ class TestScoreInjection:
         )
         score, _ = score_injection(content, backend="ensemble")
         assert 0.0 <= score <= 1.0
+
+    def test_combine_detection_scores_uses_supplied_classifier_result(self):
+        score, labels = combine_detection_scores(
+            (0.2, ["heuristic_label"]),
+            (0.5, ["custom_classifier"]),
+        )
+
+        assert score == 0.6
+        assert labels == ["custom_classifier", "heuristic_label"]

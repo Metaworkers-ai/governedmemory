@@ -368,8 +368,26 @@ class TestBuildResultArtifact:
             artifact["governance"]["source_mapping_version"]
             == "banking-v2-content-scored-transactions"
         )
+        assert artifact["governance"]["gate_policy"] == "tool_outputs_only"
         assert artifact["status"] == "completed"
         assert artifact["infrastructure_errors"] == []
+
+    def test_artifact_records_strict_gate_policy(self):
+        artifact = build_result_artifact(
+            _make_context(),
+            agentdojo_version="0.1.35",
+            benchmark_version="1.2.2",
+            suite="banking",
+            user_task_id="user_task_3",
+            injection_task_id=None,
+            model="test-model",
+            seed=0,
+            utility=True,
+            security=None,
+            include_user_input_in_gate=True,
+        )
+
+        assert artifact["governance"]["gate_policy"] == "all_evidence"
 
     def test_infrastructure_error_status(self):
         context = _make_context()

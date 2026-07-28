@@ -7,15 +7,11 @@ this element here:
 
     SystemMessage -> InitQuery -> GovernedRunInitializer -> LLM -> ToolsExecutionLoop(...)
 
-Persisting the initial prompt as trusted evidence means a benign task
-already has at least one trusted evidence record on the books before any
-direct privileged action. Without this, a task whose very first agent
-action is a privileged call -- no prior tool output at all -- would have an
-empty evidence snapshot for the all-evidence gate (Step 7) to evaluate,
-which would either wrongly deny a legitimate action or (worse) wrongly
-allow one, depending on how an empty snapshot is treated. This element
-exists so that case never comes up: real GovernedMemory evidence always
-exists before the pipeline reaches the LLM.
+Persisting the initial prompt creates a trusted, audited authorization
+anchor before the pipeline reaches the LLM. AgentDojo's default
+tool-output-only gate does not re-evaluate this first-party task text;
+strict comparison mode does. Either way, a direct privileged call is only
+permitted after this initializer has completed successfully.
 """
 
 from __future__ import annotations
@@ -75,6 +71,14 @@ class GovernedRunInitializer(BasePipelineElement):
                 list(messages),
                 env,
             ) from exc
+
+        if context.has_infrastructure_error:
+            raise AbortAgentError(
+                "GovernedRunInitializer: this attempt already has a governance "
+                "infrastructure error and cannot be retried safely",
+                list(messages),
+                env,
+            )
 
         if context.processed_initial_input:
             return query, runtime, env, messages, extra_args

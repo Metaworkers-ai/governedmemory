@@ -56,7 +56,7 @@ building each step:
 | 8 | `ensure_banking_policy()` upserts a tenant-scoped policy with `PrivilegedActions=[send_money, schedule_transaction, update_scheduled_transaction, update_password, update_user_info]` and `require_trust=True`, called once per attempt right after `generate_run_identity()` | GovernedMemory's shipped `PrivilegeRules` defaults (`send_email`, `refund`, `escalate`) don't match any Banking tool name — an unconfigured tenant would leave every privileged action unconditionally allowed (verified against `evaluate_privileged_action()`'s real source, then proven with a Docker-backed integration test) |
 | 9 | The source-tool wrapper formats results with the exact same formatter callable AgentDojo's `ToolsExecutor` uses (`tool_result_to_str` by default) | `ToolsExecutor` formats a tool's raw result *again*, independently, after `run_function()` returns — if the wrapper wrote different text, the persisted evidence (and injection scanner score) wouldn't match what the LLM actually reads |
 | 10 | `make_banking_source_tool_hook()` refuses to build a hook for any of the five privileged actions | Wrapping a mutating tool with the read-tool hook instead of Step 7's privileged hook would let it run completely ungated while still looking governed in the tool list — worse than doing nothing |
-| 11 | The privileged-tool wrapper checks `check_privilege()` against **every** evidence id in the attempt, not the most-recent or most-tainted one, and never short-circuits on the first denial | This is the resolved memory-selection rule from the original spec's open question — gating against all evidence closes the gap where an injected instruction sits a few tool calls back with a benign call in between; checking every id (not stopping at the first denial) keeps the audit record (`ActionEvent.denied_memory_ids`) complete |
+| 11 | The privileged-tool wrapper checks `check_privilege()` against **every selected** evidence id, not the most-recent or most-tainted one, and never short-circuits on the first denial. AgentDojo defaults to all tool outputs; strict comparison mode also includes the benchmark-authored initial task. | Checking all attacker-reachable tool outputs closes the gap where an injected instruction sits a few tool calls back with a benign call in between, while treating the first-party task as the authorization anchor avoids classifier false positives blocking direct legitimate actions. |
 | 12 | Denial raises a plain `PrivilegedActionDenied` (propagates as an ordinary AgentDojo tool error), not `AbortAgentError` | A blocked attack is a *successful* governance decision, not an infrastructure failure — the attempt should continue (the agent may recover, try something else, or simply fail the injected sub-task while completing the benign one), not abort outright. Contrast with `GovernanceInfrastructureError` (decision #6), which genuinely should abort |
 | 13 | No evidence at all → the privileged-tool wrapper denies by default rather than allowing | Normally impossible once `GovernedRunInitializer` (Step 4) has run, but a defensive fail-closed fallback instead of an ambiguous "nothing to check, so allow" |
 | 14 | `EvidenceRef` gained an optional `audit_id` field (default `None`, so no existing construction site broke) | The result artifact's `audit_ids` list (LLD section 17) needs it; `MemoryRecord.audit_id` was already available from `write()` but nothing had captured it before Step 9 |
@@ -182,12 +182,14 @@ the entire design rests on (see Step 1).
 
 ### Step 7 — Privileged-tool wrapper (`privileged_tool_wrapper.py`)
 
-`make_privileged_tool_hook()`: snapshots every evidence id written so far
-in the attempt (`context.ordered_evidence_ids()`), calls
-`check_privilege()` once per id — all of them, never short-circuiting on
-the first denial — and denies if any one fails (decision #11). The
-original tool is never invoked on denial. No evidence at all denies by
-default (decision #13). On full allow: runs the original tool, writes its
+`make_privileged_tool_hook()`: snapshots every evidence id selected by the
+gate policy (`context.ordered_evidence_ids(...)`), calls
+`check_privilege()` once per id — all selected ids, never short-circuiting
+on the first denial — and denies if any one fails (decision #11). The
+original tool is never invoked on denial. The default tool-output-only
+policy permits an empty tool-output set only when the trusted initial task
+was successfully persisted; a genuinely empty context denies (decision
+#13). On full allow: runs the original tool, writes its
 confirmation output as new evidence, then records an allowed `ActionEvent`
 — in that order, which is exactly the evidence-then-action interleaving
 the Step 6 sequencing bug fix was needed to support. Denial raises
@@ -419,7 +421,7 @@ is written as `TRUSTED_SYSTEM`, describing the bank API delivery channel.
 Its formatted output still goes through `MemoryStore.write()` and the
 existing injection scanner. Benign descriptions therefore remain trusted;
 scanner-flagged descriptions become untrusted and block later privileged
-actions through the unchanged all-evidence gate.
+actions through the tool-output evidence gate.
 
 `read_file` remains `UNTRUSTED_WEB`, so legitimate tasks that require file
 content before a privileged action can still be false-blocked. The full

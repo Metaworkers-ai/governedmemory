@@ -186,6 +186,26 @@ class TestPassthrough:
 
 
 class TestFailClosed:
+    def test_prior_infrastructure_error_prevents_retry(self):
+        store = FakeStore()
+        registry = RunContextRegistry()
+        context = _context()
+        context.mark_infrastructure_error("earlier write failed")
+        env = EmptyEnv()
+        registry.register(env, context)
+        initializer = GovernedRunInitializer(store, registry=registry)
+
+        with pytest.raises(AbortAgentError, match="cannot be retried safely"):
+            initializer.query(
+                "Please pay my bill",
+                FunctionsRuntime([]),
+                env,
+                (),
+                {},
+            )
+
+        assert store.writes == []
+
     def test_missing_context_registration_raises_abort_agent_error(self):
         store = FakeStore()
         registry = RunContextRegistry()  # nothing registered

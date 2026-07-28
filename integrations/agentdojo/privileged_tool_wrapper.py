@@ -1,7 +1,6 @@
 """Privileged-tool wrapper: gates a Banking privileged action behind
-`MemoryStore.check_privilege()`, evaluated against every piece of evidence
-written so far in the attempt, before the original tool is ever allowed to
-run.
+`MemoryStore.check_privilege()`, evaluated against the configured evidence
+set before the original tool is ever allowed to run.
 
 See the reviewed low-level design, section 9's "Privileged tool flow" and
 section 13's all-evidence gating rule:
@@ -26,11 +25,10 @@ section 13's all-evidence gating rule:
 "The original privileged function is never invoked on denial" -- this
 module raises before ever calling `original_run` in that case.
 
-Gating against *every* evidence id, not the most-recent or most-relevant
-one, is deliberate: it's what the team's spec review settled on (over a
-"most-recent-write" or "most-recent-tainted" heuristic) precisely because
-an injected instruction can sit several tool calls back with a benign call
-in between, and this is the only rule that can't be fooled by that.
+The AgentDojo Banking default includes every tool-output evidence id, not
+only the most recent or most relevant one. The benchmark-authored initial
+task remains persisted and audited but serves as the authorization anchor.
+Strict comparison mode includes that initial message in the gate as well.
 """
 
 from __future__ import annotations
@@ -98,6 +96,7 @@ def make_privileged_tool_hook(
     source_type: SourceType,
     *,
     formatter: ToolOutputFormatter = tool_result_to_str,
+    include_user_input_in_gate: bool = True,
 ) -> GovernedRunHook:
     """Build the `GovernedRunHook` for one Banking privileged action.
 
@@ -116,10 +115,15 @@ def make_privileged_tool_hook(
         formatter: must match the callable configured for AgentDojo's
             `ToolsExecutor(tool_output_formatter=...)`, same reasoning as
             the source-tool wrapper.
+        include_user_input_in_gate: when False, the initial benchmark task
+            remains scanned, persisted, and audited but is not passed to
+            `check_privilege()`. Every tool output remains gated.
 
     The returned hook:
-    - Snapshots every evidence id written so far in the attempt
-      (`context.ordered_evidence_ids()`), *before* deciding anything.
+    - Snapshots the configured evidence set written so far in the attempt
+      (`context.ordered_evidence_ids(...)`), *before* deciding anything.
+      AgentDojo Banking defaults to tool outputs only; strict comparison
+      runs can include the benchmark-authored initial user message.
     - Denies outright, with no `check_privilege()` calls at all, if that
       snapshot is empty -- normally impossible once
       `GovernedRunInitializer` has run, but a defensive fail-closed default
@@ -142,9 +146,28 @@ def make_privileged_tool_hook(
     def hook(
         context: RunGovernanceContext, original_run: Callable[..., Any], kwargs: dict[str, Any]
     ) -> Any:
-        evidence_ids = context.ordered_evidence_ids()
+        if context.has_infrastructure_error:
+            raise GovernanceInfrastructureError(
+                f"refusing {tool_name!r}: this attempt already has a governance "
+                "infrastructure error"
+            )
+        evidence_ids = context.ordered_evidence_ids(include_user_input=include_user_input_in_gate)
 
         if not evidence_ids:
+            # AgentDojo's benchmark-authored opening task is first-party
+            # intent, not the attacker-reachable channel. In tool-output-only
+            # mode it is still scanned, persisted, and audited, but it acts as
+            # the run's trusted authorization anchor rather than being sent
+            # through check_privilege(). This permits direct legitimate
+            # actions while keeping every tool output fail-closed.
+            if not include_user_input_in_gate and context.processed_initial_input:
+                raw_result = original_run(**kwargs)
+                return _record_allowed_result(
+                    context,
+                    original_run_result=raw_result,
+                    evidence_ids=(),
+                    gate_latency_ms=0.0,
+                )
             sequence = context.next_sequence()
             context.append_action(
                 ActionEvent(
@@ -206,8 +229,21 @@ def make_privileged_tool_hook(
 
         # Every evidence id allowed this action -- run the original tool.
         raw_result = original_run(**kwargs)
-        formatted_result = formatter(raw_result)
+        return _record_allowed_result(
+            context,
+            original_run_result=raw_result,
+            evidence_ids=evidence_ids,
+            gate_latency_ms=gate_latency_ms,
+        )
 
+    def _record_allowed_result(
+        context: RunGovernanceContext,
+        *,
+        original_run_result: Any,
+        evidence_ids: tuple[str, ...],
+        gate_latency_ms: float,
+    ) -> Any:
+        formatted_result = formatter(original_run_result)
         write_sequence = context.next_sequence()
         source_ref = f"agentdojo:banking:{tool_name}:{write_sequence}"
         try:
@@ -261,7 +297,7 @@ def make_privileged_tool_hook(
             )
         )
 
-        return raw_result
+        return original_run_result
 
     return hook
 
@@ -271,6 +307,7 @@ def make_banking_privileged_tool_hook(
     tool_name: str,
     *,
     formatter: ToolOutputFormatter = tool_result_to_str,
+    include_user_input_in_gate: bool = False,
 ) -> GovernedRunHook:
     """Convenience over `make_privileged_tool_hook`: looks up `tool_name`'s
     `SourceType` automatically, and refuses to build a hook for a tool
@@ -295,5 +332,9 @@ def make_banking_privileged_tool_hook(
             "before wrapping it."
         )
     return make_privileged_tool_hook(
-        store, tool_name, SOURCE_TYPE_BY_TOOL[tool_name], formatter=formatter
+        store,
+        tool_name,
+        SOURCE_TYPE_BY_TOOL[tool_name],
+        formatter=formatter,
+        include_user_input_in_gate=include_user_input_in_gate,
     )

@@ -109,11 +109,13 @@ def _make_context(**overrides) -> RunGovernanceContext:
     return RunGovernanceContext(identity=identity, **overrides)
 
 
-def _evidence(sequence: int, memory_id: str = "mem-1") -> EvidenceRef:
+def _evidence(
+    sequence: int, memory_id: str = "mem-1", source_kind: str = "tool_output"
+) -> EvidenceRef:
     return EvidenceRef(
         memory_id=memory_id,
         sequence=sequence,
-        source_kind="tool_output",
+        source_kind=source_kind,
         tool_name="get_most_recent_transactions",
         source_ref="agentdojo:banking:get_most_recent_transactions:0",
         taint="untrusted",
@@ -146,6 +148,16 @@ class TestRunGovernanceContextSequencing:
         seq1 = ctx.next_sequence()
         ctx.append_evidence(_evidence(seq1, "mem-b"))
         assert ctx.ordered_evidence_ids() == ("mem-a", "mem-b")
+
+    def test_can_exclude_initial_user_input_from_gate_snapshot(self):
+        ctx = _make_context()
+        user_seq = ctx.next_sequence()
+        ctx.append_evidence(_evidence(user_seq, "mem-user", "user_input"))
+        tool_seq = ctx.next_sequence()
+        ctx.append_evidence(_evidence(tool_seq, "mem-tool", "tool_output"))
+
+        assert ctx.ordered_evidence_ids() == ("mem-user", "mem-tool")
+        assert ctx.ordered_evidence_ids(include_user_input=False) == ("mem-tool",)
 
     def test_append_evidence_out_of_order_is_rejected(self):
         ctx = _make_context()

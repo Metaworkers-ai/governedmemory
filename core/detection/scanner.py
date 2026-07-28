@@ -58,13 +58,26 @@ def _classifier_score(content: str) -> tuple[float, list[str]]:
     return score, labels
 
 
-def _ensemble_score(content: str) -> tuple[float, list[str]]:
-    heuristic_score, heuristic_labels = _heuristic_scan(content)
-    ml_score, ml_labels = _classifier_score(content)
+def combine_detection_scores(
+    heuristic_result: tuple[float, list[str]],
+    classifier_result: tuple[float, list[str]],
+) -> tuple[float, list[str]]:
+    """Combine independently-produced heuristic and classifier results.
 
+    Keeping this operation public lets held-out evaluation combine the
+    heuristic with the classifier trained on that evaluation's training
+    split, instead of accidentally loading the process-wide default model
+    trained on the complete bundled dataset.
+    """
+    heuristic_score, heuristic_labels = heuristic_result
+    ml_score, ml_labels = classifier_result
     combined = round(1.0 - (1.0 - heuristic_score) * (1.0 - ml_score), 3)
     labels = sorted(set(heuristic_labels) | set(ml_labels))
     return combined, labels
+
+
+def _ensemble_score(content: str) -> tuple[float, list[str]]:
+    return combine_detection_scores(_heuristic_scan(content), _classifier_score(content))
 
 
 def score_injection(content: str, backend: str | None = None) -> tuple[float, list[str]]:

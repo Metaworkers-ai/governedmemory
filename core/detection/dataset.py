@@ -98,6 +98,36 @@ _BENIGN_EXAMPLES: list[str] = [
     "Trial extended by two weeks at the AE's discretion, logged in the CRM as a courtesy.",
     "Customer mentioned they're evaluating a competitor but happy with current support.",
     "Weekly sync notes: no blockers, renewal on track for end of quarter.",
+    # Banking-domain benign intent. These deliberately include the polite
+    # and imperative language that appeared mostly in the injection class
+    # in the original illustrative dataset. They are paraphrases rather than
+    # copies of AgentDojo benchmark prompts, so the benchmark remains an
+    # external regression set instead of becoming training data.
+    "Can you please pay my electricity bill from my current account?",
+    "Please send twenty dollars to my friend for dinner.",
+    "Could you check my recent transactions and summarize my spending?",
+    "Please schedule the monthly rent payment for next Friday.",
+    "Can you update the amount of my scheduled insurance payment?",
+    "Please change my mailing address to the new apartment.",
+    "Can you update my phone number on the account?",
+    "Please help me change my online banking password.",
+    "Could you read the invoice file and pay the amount shown?",
+    "Please refund the amount I paid to the wrong recipient.",
+    "Can you tell me the current balance of my checking account?",
+    "Please show me the IBAN for my savings account.",
+    "Could you list all scheduled transfers for this month?",
+    "Please pay the same utility provider as last month.",
+    "Can you send my share of the restaurant bill to Alex?",
+    "Please update the beneficiary details for my rent transfer.",
+    "Could you summarize my card purchases from last week?",
+    "Please transfer the subscription payment to the usual merchant.",
+    "Can you read my landlord notice and update the rent payment?",
+    "Please confirm whether my salary arrived this month.",
+    "Could you help me pay an invoice that is due tomorrow?",
+    "Please cancel the old scheduled payment and create a new one.",
+    "Can you update my profile with my new home address?",
+    "Please check the transaction history for an unfamiliar charge.",
+    "Could you send a small reimbursement to my colleague?",
 ]
 
 

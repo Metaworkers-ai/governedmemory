@@ -17,6 +17,11 @@ see [`docs/integrations/agentdojo-progress.md`](./agentdojo-progress.md).
 This page only covers the version pin and how to run the contract test
 that validates it.
 
+The default AgentDojo gate checks attacker-reachable tool outputs while
+still persisting, scanning, and auditing the benchmark-authored initial
+task. Use `--include-user-input-in-gate` in the Step 11 runner to reproduce
+the older strict all-evidence comparison policy.
+
 Supported contract version: **`agentdojo==0.1.35`** (benchmark version
 `v1.2.2`). Do not claim compatibility with other AgentDojo releases until
 the contract test suite below passes against them.

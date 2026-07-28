@@ -64,11 +64,14 @@ def make_banking_hook_selector(
     store: MemoryStore,
     *,
     formatter: ToolOutputFormatter = tool_result_to_str,
+    include_user_input_in_gate: bool = False,
 ) -> Callable[[Function], GovernedRunHook]:
     """Return a `hook_for` selector suitable for
     `GovernedFunctionFactory.wrap_all()`: privileged Banking tools get the
-    all-evidence gate (Step 7), everything else gets the source-tool
-    evidence writer (Step 6). Both convenience constructors already
+    configured evidence gate (Step 7), everything else gets the source-tool
+    evidence writer (Step 6). By default the gate includes all tool outputs
+    but not the benchmark-authored initial task. Both convenience constructors
+    already
     validate their own tool-name assumptions (misuse guards), so a caller
     accidentally routing a tool to the wrong side surfaces as an
     exception from this call, not a silent ungated tool.
@@ -76,7 +79,12 @@ def make_banking_hook_selector(
 
     def hook_for(fn: Function) -> GovernedRunHook:
         if fn.name in PRIVILEGED_ACTIONS:
-            return make_banking_privileged_tool_hook(store, fn.name, formatter=formatter)
+            return make_banking_privileged_tool_hook(
+                store,
+                fn.name,
+                formatter=formatter,
+                include_user_input_in_gate=include_user_input_in_gate,
+            )
         return make_banking_source_tool_hook(store, fn.name, formatter=formatter)
 
     return hook_for
@@ -87,6 +95,7 @@ def make_governed_runtime_class(
     *,
     registry: RunContextRegistry = default_registry,
     formatter: ToolOutputFormatter = tool_result_to_str,
+    include_user_input_in_gate: bool = False,
 ) -> type[FunctionsRuntime]:
     """Build a `FunctionsRuntime` subclass whose `__init__` wraps every
     tool it's given through `GovernedFunctionFactory`.
@@ -99,7 +108,11 @@ def make_governed_runtime_class(
     `run_task_with_pipeline` an already-wrapped `FunctionsRuntime`.
     """
     factory = GovernedFunctionFactory(registry)
-    hook_for = make_banking_hook_selector(store, formatter=formatter)
+    hook_for = make_banking_hook_selector(
+        store,
+        formatter=formatter,
+        include_user_input_in_gate=include_user_input_in_gate,
+    )
 
     class GovernedFunctionsRuntime(FunctionsRuntime):
         def __init__(self, functions=()):
@@ -153,6 +166,7 @@ def build_result_artifact(
     seed: int,
     utility: bool,
     security: bool | None,
+    include_user_input_in_gate: bool = False,
 ) -> dict[str, Any]:
     """Build one JSON-serializable result record for this task attempt, per
     the LLD's section 17. Called after the attempt has fully completed
@@ -197,6 +211,7 @@ def build_result_artifact(
             "memory_ids": [e.memory_id for e in context.evidence],
             "audit_ids": [e.audit_id for e in context.evidence if e.audit_id is not None],
             "source_mapping_version": SOURCE_MAPPING_VERSION,
+            "gate_policy": ("all_evidence" if include_user_input_in_gate else "tool_outputs_only"),
             "write_latencies_ms": list(context.write_latencies_ms()),
             "gate_latencies_ms": list(context.gate_latencies_ms()),
         },
@@ -222,6 +237,7 @@ def run_governed_banking_task(
     system_message: str | None = None,
     tool_output_formatter: ToolOutputFormatter = tool_result_to_str,
     max_iters: int = 15,
+    include_user_input_in_gate: bool = False,
 ) -> dict[str, Any]:
     """Run exactly one governed Banking task attempt end-to-end and return
     its result artifact (LLD section 17).
@@ -301,7 +317,10 @@ def run_governed_banking_task(
         max_iters=max_iters,
     )
     governed_runtime_class = make_governed_runtime_class(
-        store, registry=registry, formatter=tool_output_formatter
+        store,
+        registry=registry,
+        formatter=tool_output_formatter,
+        include_user_input_in_gate=include_user_input_in_gate,
     )
 
     with registry.run(task_environment, context):
@@ -326,6 +345,7 @@ def run_governed_banking_task(
         seed=seed,
         utility=utility,
         security=security if injection_task is not None else None,
+        include_user_input_in_gate=include_user_input_in_gate,
     )
 
 

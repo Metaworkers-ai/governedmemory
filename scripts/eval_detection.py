@@ -21,7 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.detection import InjectionClassifier, evaluate_at_thresholds, split_examples
-from core.detection.scanner import score_injection
+from core.detection.scanner import combine_detection_scores
 from core.write_governor import scan_for_injection
 
 
@@ -52,7 +52,10 @@ def main() -> None:
 
     heuristic_scorer = lambda text: scan_for_injection(text)[0]  # noqa: E731
     classifier_scorer = clf.predict_proba
-    ensemble_scorer = lambda text: score_injection(text, backend="ensemble")[0]  # noqa: E731
+    ensemble_scorer = lambda text: combine_detection_scores(  # noqa: E731
+        scan_for_injection(text),
+        (clf.predict_proba(text), []),
+    )[0]
 
     _print_table(
         "E2 heuristic scanner", evaluate_at_thresholds(heuristic_scorer, test, args.thresholds)

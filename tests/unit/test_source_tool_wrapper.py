@@ -193,6 +193,21 @@ class TestEvidenceBookkeeping:
 
 
 class TestFailClosedOnWriteFailure:
+    def test_prior_infrastructure_error_prevents_original_read_tool(self):
+        store = FakeStore()
+        context = _context()
+        context.mark_infrastructure_error("earlier write failed")
+        runtime, env = _wire(
+            store,
+            make_source_tool_hook(store, "get_most_recent_transactions", SourceType.TRUSTED_SYSTEM),
+            context,
+        )
+
+        with pytest.raises(AbortAgentError):
+            runtime.run_function(env, "_get_most_recent_transactions", {}, raise_on_error=True)
+
+        assert store.writes == []
+
     def test_write_failure_raises_abort_agent_error(self):
         store = FakeStore()
         store.fail_with = ConnectionError("database unavailable")

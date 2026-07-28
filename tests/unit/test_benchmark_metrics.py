@@ -69,6 +69,7 @@ class TestEmptyRecordSet:
         metrics = compute_metrics([])
 
         assert metrics["record_count"] == 0
+        assert metrics["valid_record_count"] == 0
         for key in (
             "utility_success_rate",
             "security_success_rate",
@@ -263,6 +264,48 @@ class TestInfrastructureErrorRate:
         records = [_baseline_record(utility=True), _governed_record(utility=True)]
         assert compute_metrics(records)["infrastructure_error_rate"] == 0.0
 
+    def test_invalid_attempts_are_excluded_from_every_other_metric(self):
+        records = [
+            _governed_record(
+                utility=True,
+                security=False,
+                injection_task_id="inj_0",
+                evidence_count=2,
+                trusted_count=2,
+                privileged_attempts=1,
+                allowed_actions=1,
+                blocked_actions=0,
+                write_latencies_ms=[10.0],
+                gate_latencies_ms=[5.0],
+            ),
+            _governed_record(
+                utility=False,
+                security=True,
+                injection_task_id="inj_0",
+                evidence_count=10,
+                trusted_count=0,
+                privileged_attempts=10,
+                allowed_actions=0,
+                blocked_actions=10,
+                write_latencies_ms=[999.0],
+                gate_latencies_ms=[999.0],
+                status="infrastructure_error",
+            ),
+        ]
+
+        metrics = compute_metrics(records)
+
+        assert metrics["record_count"] == 2
+        assert metrics["valid_record_count"] == 1
+        assert metrics["utility_success_rate"] == 1.0
+        assert metrics["security_success_rate"] == 1.0
+        assert metrics["targeted_asr"] == 0.0
+        assert metrics["governance_block_rate"] == 0.0
+        assert metrics["untrusted_evidence_rate"] == 0.0
+        assert metrics["write_latency_ms"]["mean_ms"] == 10.0
+        assert metrics["gate_latency_ms"]["mean_ms"] == 5.0
+        assert metrics["infrastructure_error_rate"] == 0.5
+
 
 class TestLatencySummaries:
     def test_none_when_no_samples_at_all(self):
@@ -312,6 +355,7 @@ class TestComputeMetricsByConfiguration:
 
         assert set(result) == set(CONFIGURATIONS)
         assert result["baseline_benign"]["record_count"] == 2
+        assert result["baseline_benign"]["valid_record_count"] == 2
         assert result["governed_benign"]["record_count"] == 1
         assert result["baseline_attacked"]["record_count"] == 0
         assert result["governed_attacked"]["record_count"] == 0

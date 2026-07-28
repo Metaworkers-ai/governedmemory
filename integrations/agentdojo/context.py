@@ -50,9 +50,9 @@ class ActionEvent:
     """One privileged-action gating decision made during this attempt.
 
     Populated by a privileged-tool wrapper after it has evaluated
-    `check_privilege()` against every currently known evidence id -- see the
-    LLD's all-evidence gating rule (section 13). `evidence_ids` is the full
-    snapshot that was checked, not just the ones that failed.
+    `check_privilege()` against every evidence id selected by the configured
+    gate policy. `evidence_ids` is the full snapshot that was checked, not
+    just the ones that failed.
     """
 
     sequence: int
@@ -63,7 +63,7 @@ class ActionEvent:
     reason: str
     gate_latency_ms: float | None = None
     """Wall-clock time spent evaluating check_privilege() across every
-    evidence id in this decision (the whole all-evidence loop, not a
+    selected evidence id in this decision (the whole gate loop, not a
     single call), in milliseconds. Needed for the LLD section 16
     benchmark metric `gate_latency_ms`."""
 
@@ -115,7 +115,7 @@ class RunGovernanceContext:
         those things actually happen. Sequence order is what "ordered
         evidence" and "most recently written" mean everywhere else in this
         design -- assigning sequence numbers out of order, or reusing one,
-        would silently corrupt the all-evidence gate in a later step.
+        would silently corrupt the evidence gate in a later step.
         """
         seq = self._next_sequence
         self._next_sequence += 1
@@ -162,14 +162,18 @@ class RunGovernanceContext:
 
     # -- readers --
 
-    def ordered_evidence_ids(self) -> tuple[str, ...]:
+    def ordered_evidence_ids(self, *, include_user_input: bool = True) -> tuple[str, ...]:
         """Snapshot of every evidence memory_id written so far, in sequence
-        order. This is the exact candidate set the privileged-tool wrapper
-        loops `check_privilege()` over (LLD section 13's all-evidence gate)
-        -- never a "most recent" or "most relevant" lookup. Sorted by
-        sequence explicitly rather than relying on append order, since
-        evidence and actions can now interleave (see append_evidence)."""
-        return tuple(e.memory_id for e in sorted(self.evidence, key=lambda e: e.sequence))
+        order. `include_user_input=False` implements AgentDojo's
+        tool-output-only gate while retaining the initial message for audit;
+        strict comparison mode leaves it True. This is never a "most recent"
+        or semantic lookup. Sorted by sequence explicitly rather than relying
+        on append order, since evidence and actions can interleave."""
+        return tuple(
+            e.memory_id
+            for e in sorted(self.evidence, key=lambda e: e.sequence)
+            if include_user_input or e.source_kind != "user_input"
+        )
 
     def write_latencies_ms(self) -> tuple[float, ...]:
         """Every recorded write_latency_ms across this attempt's evidence,

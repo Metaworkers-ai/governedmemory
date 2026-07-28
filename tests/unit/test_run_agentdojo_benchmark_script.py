@@ -41,6 +41,64 @@ class TestTag:
         assert tagged["user_task_id"] == "user_task_1"
         assert "config" not in record
 
+    def test_attaches_run_metadata_when_provided(self):
+        tagged = run_agentdojo_benchmark._tag(
+            {"user_task_id": "user_task_1"},
+            "governed_benign",
+            {"detection_backend": "ensemble"},
+        )
+
+        assert tagged["run_metadata"]["detection_backend"] == "ensemble"
+
+
+class TestTaskSelection:
+    def test_explicit_ids_preserve_order_and_remove_duplicates(self):
+        selected = run_agentdojo_benchmark._select_ids(
+            {"user_task_0": object(), "user_task_3": object()},
+            ["user_task_3", "user_task_0", "user_task_3"],
+            None,
+            label="user task",
+        )
+
+        assert selected == ["user_task_3", "user_task_0"]
+
+    def test_unknown_explicit_id_is_rejected(self):
+        with pytest.raises(ValueError, match="user_task_missing"):
+            run_agentdojo_benchmark._select_ids(
+                {"user_task_0": object()},
+                ["user_task_missing"],
+                None,
+                label="user task",
+            )
+
+    def test_limit_applies_after_explicit_selection(self):
+        selected = run_agentdojo_benchmark._select_ids(
+            {"user_task_0": object(), "user_task_3": object()},
+            ["user_task_3", "user_task_0"],
+            1,
+            label="user task",
+        )
+
+        assert selected == ["user_task_3"]
+
+
+class TestResumeHelpers:
+    def test_load_existing_records_reads_jsonl(self, tmp_path):
+        raw_path = tmp_path / "raw.jsonl"
+        raw_path.write_text('{"config":"baseline_benign","user_task_id":"user_task_0","seed":0}\n')
+
+        records = run_agentdojo_benchmark._load_existing_records(raw_path)
+
+        assert len(records) == 1
+        assert records[0]["user_task_id"] == "user_task_0"
+
+    def test_invalid_jsonl_reports_line_number(self, tmp_path):
+        raw_path = tmp_path / "raw.jsonl"
+        raw_path.write_text("{}\nnot-json\n")
+
+        with pytest.raises(ValueError, match=":2"):
+            run_agentdojo_benchmark._load_existing_records(raw_path)
+
 
 class TestConfigsArgumentValidation:
     def test_default_includes_all_four_configurations(self):
@@ -107,6 +165,27 @@ class TestMethodologyReport:
         assert "utility_success_rate" in content
         assert "false_block_rate" in content
         assert "Only a pre-execution policy denial counts as a GovernedMemory block" in content
+
+    def test_includes_reproducibility_metadata(self, tmp_path):
+        metrics = self._sample_metrics()
+        metadata = {
+            "git_commit": "abc123",
+            "detection_backend": "ensemble",
+            "injection_threshold": 0.7,
+            "classifier_sha256": "deadbeef",
+            "source_mapping_version": "banking-v2-content-scored-transactions",
+            "gate_policy": "tool_outputs_only",
+        }
+
+        run_agentdojo_benchmark.write_methodology_report(
+            tmp_path, "gpt-4o-mini-2024-07-18", metrics, metadata
+        )
+
+        content = (tmp_path / "methodology.md").read_text()
+        assert "abc123" in content
+        assert "ensemble" in content
+        assert "deadbeef" in content
+        assert "tool_outputs_only" in content
 
     def test_none_metrics_render_as_an_em_dash_not_a_python_none(self, tmp_path):
         metrics = self._sample_metrics()

@@ -334,7 +334,83 @@ class TestAnyDeniedEvidenceBlocksTheAction:
         assert context.actions[0].allowed is False
 
 
+class TestInitialUserInputGatePolicy:
+    def _seed_untrusted_user_input(self, context: RunGovernanceContext) -> None:
+        seq = context.next_sequence()
+        context.append_evidence(
+            EvidenceRef(
+                memory_id="mem-user",
+                sequence=seq,
+                source_kind="user_input",
+                tool_name=None,
+                source_ref="agentdojo:user:user_task_1",
+                taint="untrusted",
+                injection_score=0.907,
+                policy_id=context.policy_id,
+            )
+        )
+        context.processed_initial_input = True
+
+    def test_banking_default_audits_but_does_not_gate_on_initial_prompt(self):
+        store = FakeStore()
+        store.deny_memory_ids = {"mem-user"}
+        context = _context()
+        self._seed_untrusted_user_input(context)
+        hook = make_banking_privileged_tool_hook(store, "send_money")
+        runtime, env, _ = _wire(store, hook, context)
+
+        result, error = runtime.run_function(
+            env, "_send_money_like", {"amount": 10.0, "recipient": "landlord"}
+        )
+
+        assert error is None
+        assert result == "sent 10.0 to landlord"
+        assert store.check_calls == []
+        assert context.actions[0].allowed is True
+        assert context.actions[0].evidence_ids == ()
+
+    def test_strict_mode_still_checks_and_blocks_initial_prompt(self):
+        store = FakeStore()
+        store.deny_memory_ids = {"mem-user"}
+        context = _context()
+        self._seed_untrusted_user_input(context)
+        hook = make_banking_privileged_tool_hook(
+            store, "send_money", include_user_input_in_gate=True
+        )
+        runtime, env, _ = _wire(store, hook, context)
+
+        with pytest.raises(PrivilegedActionDenied):
+            runtime.run_function(
+                env,
+                "_send_money_like",
+                {"amount": 10.0, "recipient": "landlord"},
+                raise_on_error=True,
+            )
+
+        assert [call[0] for call in store.check_calls] == ["mem-user"]
+        assert _send_money_calls == []
+
+
 class TestFailClosedOnInfrastructureErrors:
+    def test_prior_infrastructure_error_prevents_any_later_side_effect(self):
+        store = FakeStore()
+        context = _context()
+        context.mark_infrastructure_error("earlier write failed")
+        _seed_evidence(context, "mem-1")
+        hook = make_privileged_tool_hook(store, "send_money", SourceType.TRUSTED_SYSTEM)
+        runtime, env, _ = _wire(store, hook, context)
+
+        with pytest.raises(AbortAgentError):
+            runtime.run_function(
+                env,
+                "_send_money_like",
+                {"amount": 10.0, "recipient": "landlord"},
+                raise_on_error=True,
+            )
+
+        assert _send_money_calls == []
+        assert store.check_calls == []
+
     def test_check_privilege_failure_raises_abort_agent_error(self):
         store = FakeStore()
         store.check_privilege_fail_with = ConnectionError("database unavailable")

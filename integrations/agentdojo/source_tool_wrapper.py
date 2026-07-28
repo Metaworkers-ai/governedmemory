@@ -94,6 +94,11 @@ def make_source_tool_hook(
     def hook(
         context: RunGovernanceContext, original_run: Callable[..., Any], kwargs: dict[str, Any]
     ) -> Any:
+        if context.has_infrastructure_error:
+            raise GovernanceInfrastructureError(
+                f"refusing {tool_name!r}: this attempt already has a governance "
+                "infrastructure error"
+            )
         raw_result = original_run(**kwargs)  # let the tool's own errors propagate untouched
         formatted_result = formatter(raw_result)
 
