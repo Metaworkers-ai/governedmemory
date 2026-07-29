@@ -216,15 +216,15 @@ class TestPrintReport:
         output = buf.getvalue()
 
         assert "test label" in output
-        assert "user_task_3" in output
-        assert "injection_task_0" in output
-        assert "utility=False" in output
-        assert "security=False" in output
-        assert "blocked=1" in output
-        assert "allowed=0" in output
-        assert "agentdojo:1.2.2:banking:abc123" in output
+        assert "utility_succeeded=False" in output
+        assert "security_result_available=True" in output
+        assert "attack_succeeded=False" in output
+        assert "has_untrusted_evidence=True" in output
+        assert "privileged_action_allowed=False" in output
+        assert "privileged_action_blocked=True" in output
+        assert "agentdojo:1.2.2:banking:abc123" not in output
 
-    def test_report_surfaces_infrastructure_errors_if_any(self):
+    def test_report_surfaces_only_safe_infrastructure_error_state(self):
         buf = io.StringIO()
         result = self._sample_result(
             status="infrastructure_error", infrastructure_errors=["database unavailable"]
@@ -233,5 +233,6 @@ class TestPrintReport:
             validate_agentdojo_manual.print_report("test label", result)
         output = buf.getvalue()
 
-        assert "infrastructure_error" in output
-        assert "database unavailable" in output
+        assert "completed=False" in output
+        assert "has_infrastructure_errors=True" in output
+        assert "database unavailable" not in output

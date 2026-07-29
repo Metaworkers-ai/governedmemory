@@ -129,23 +129,31 @@ def run_one(
 
 def print_report(label: str, result: dict[str, Any]) -> None:
     g = result["governance"]
+    utility_succeeded = result["agentdojo"]["utility"] is True
+    security_result_available = result["agentdojo"]["security"] is not None
+    attack_succeeded = result["agentdojo"]["security"] is True
+    has_untrusted_evidence = g["untrusted_count"] > 0
+    privileged_action_attempted = g["privileged_attempts"] > 0
+    privileged_action_allowed = g["allowed_actions"] > 0
+    privileged_action_blocked = g["blocked_actions"] > 0
+    completed = result["status"] == "completed"
+    has_infrastructure_errors = bool(result["infrastructure_errors"])
+
     print(f"\n=== {label} ===")
     print(
-        f"  user_task_id={result['user_task_id']!r}  injection_task_id={result['injection_task_id']!r}"
+        f"  utility_succeeded={utility_succeeded}  "
+        f"security_result_available={security_result_available}  "
+        f"attack_succeeded={attack_succeeded}"
     )
     print(
-        f"  agentdojo.utility={result['agentdojo']['utility']}  agentdojo.security={result['agentdojo']['security']}"
+        f"  has_untrusted_evidence={has_untrusted_evidence}  "
+        f"privileged_action_attempted={privileged_action_attempted}"
     )
     print(
-        f"  evidence: {g['evidence_count']} total "
-        f"(trusted={g['trusted_count']}, untrusted={g['untrusted_count']})"
+        f"  privileged_action_allowed={privileged_action_allowed}  "
+        f"privileged_action_blocked={privileged_action_blocked}"
     )
-    print(
-        f"  privileged actions: {g['privileged_attempts']} attempted "
-        f"(allowed={g['allowed_actions']}, blocked={g['blocked_actions']})"
-    )
-    print(f"  status={result['status']!r}  infrastructure_errors={result['infrastructure_errors']}")
-    print(f"  tenant_id={result['tenant_id']}")
+    print(f"  completed={completed}  has_infrastructure_errors={has_infrastructure_errors}")
 
 
 def main() -> None:
