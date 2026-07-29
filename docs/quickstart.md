@@ -45,6 +45,16 @@ python scripts/smoke_quickstart.py \
   --web-url http://localhost:3000
 ```
 
+Expected output is four synthetic-data checks plus the console check:
+
+```text
+PASS health
+PASS writes (benign trusted; suspicious unsafe)
+PASS governed retrieval (suspicious record excluded)
+PASS audit events
+PASS web console reachable
+```
+
 ## Lifecycle commands
 
 ```bash

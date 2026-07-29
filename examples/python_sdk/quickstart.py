@@ -3,8 +3,31 @@
 from __future__ import annotations
 
 import os
+import urllib.error
+from collections.abc import Sequence
+from typing import Any
 
 from metaworkers import GovernedMemory, GovernedMemoryError, Source
+
+
+class ExampleValidationError(RuntimeError):
+    """Raised when the running API returns an unexpected governance result."""
+
+
+def validate_flow(benign: dict[str, Any], suspicious: dict[str, Any], safe: Sequence[dict]) -> None:
+    """Assert the documented trust and governed-retrieval contract."""
+    if not benign.get("id") or not suspicious.get("id"):
+        raise ExampleValidationError("write response did not include memory IDs")
+    benign_taint = benign.get("trust", {}).get("taint")
+    suspicious_taint = suspicious.get("trust", {}).get("taint")
+    if benign_taint != "trusted":
+        raise ExampleValidationError(f"benign memory was classified as {benign_taint!r}")
+    if suspicious_taint not in {"untrusted", "quarantined"}:
+        raise ExampleValidationError(f"suspicious memory was classified as {suspicious_taint!r}")
+    suspicious_id = suspicious.get("id")
+    safe_ids = {record.get("id") for record in safe if isinstance(record, dict)}
+    if suspicious_id in safe_ids:
+        raise ExampleValidationError("governed retrieval returned the suspicious memory")
 
 
 def main() -> None:
@@ -34,6 +57,16 @@ def main() -> None:
         )
     except GovernedMemoryError as exc:
         raise SystemExit(f"GovernedMemory request failed: {exc}") from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise SystemExit(
+            "Could not connect to GovernedMemory. Start the Quickstart and check "
+            f"GOVERNEDMEMORY_API_URL: {exc}"
+        ) from exc
+
+    try:
+        validate_flow(benign, suspicious, safe)
+    except ExampleValidationError as exc:
+        raise SystemExit(f"Governance example failed: {exc}") from exc
 
     print("benign taint:", benign["trust"]["taint"])
     print("suspicious taint:", suspicious["trust"]["taint"])

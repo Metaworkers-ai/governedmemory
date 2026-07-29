@@ -85,7 +85,7 @@ curl -sS -X POST http://localhost:8000/v1/memory \
   -d '{"customer_id":"customer-1","agent_id":"agent-1","session_id":"session-1","content":"Customer prefers email.","provenance":{"source_type":"user","source_ref":"example:benign"}}'
 ```
 
-For a copy-paste REST walkthrough, see [`examples/rest/curl.sh`](examples/rest/curl.sh).
+For a copy-paste REST walkthrough, see [`examples/rest/curl.sh`](examples/rest/curl.sh) and its [expected output](examples/rest/README.md).
 
 ## Python SDK: write, classify, retrieve
 
@@ -219,7 +219,7 @@ Near-term priorities:
 2. Publish reproducible integration and security evaluations with clear utility trade-offs.
 3. Improve contributor onboarding, release automation, and framework integrations only when they have tested contracts.
 
-See the [traction roadmap](docs/traction-roadmap.md) and [adoption execution plan](docs/adoption-execution-plan.md) for the longer plan.
+See the [traction roadmap](docs/traction-roadmap.md) for the longer plan.
 
 ## Contributing and community
 
