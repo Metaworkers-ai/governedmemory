@@ -1,0 +1,30 @@
+name: Deploy project site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/site.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    name: Deploy static site to S3 + CloudFront
+    runs-on: ubuntu-latest
+    environment:
+      name: production-site
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          role-to-assume: ${{ secrets.SITE_AWS_ROLE_ARN }}
+          aws-region: ${{ vars.SITE_AWS_REGION || 'ap-south-1' }}
+      - name: Sync site
+        run: aws s3 sync site/ "s3://${{ vars.SITE_S3_BUCKET }}" --delete --exclude README.md
+      - name: Invalidate CloudFront
+        run: aws cloudfront create-invalidation --distribution-id "${{ vars.SITE_CLOUDFRONT_DISTRIBUTION_ID }}" --paths '/*'

@@ -1,0 +1,46 @@
+{
+  "name": "@metaworkers/openclaw-governed-memory",
+  "version": "0.1.0",
+  "description": "Governed Memory plugin for OpenClaw — injection-scores memory on write, governs retrieval, and blocks agent actions backed by untrusted/poisoned memory.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Metaworkers AI <team@metaworkers.ai> (https://metaworkers.ai)",
+  "homepage": "https://github.com/Metaworkers-ai/governedmemory/tree/main/integrations/openclaw",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Metaworkers-ai/governedmemory.git",
+    "directory": "integrations/openclaw"
+  },
+  "keywords": [
+    "openclaw",
+    "openclaw-plugin",
+    "governed-memory",
+    "prompt-injection",
+    "agent-security",
+    "trust-governance",
+    "memory-governance",
+    "privilege-gate"
+  ],
+  "files": [
+    "index.ts",
+    "openclaw.plugin.json",
+    "README.md",
+    "demo.sh"
+  ],
+  "dependencies": {
+    "typebox": "1.1.39"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.3.24-beta.2"
+  },
+  "openclaw": {
+    "extensions": ["./index.ts"],
+    "compat": {
+      "pluginApi": ">=2026.3.24-beta.2",
+      "minGatewayVersion": "2026.3.24-beta.2"
+    },
+    "build": {
+      "openclawVersion": ">=2026.3.24-beta.2"
+    }
+  }
+}

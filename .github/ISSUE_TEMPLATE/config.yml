@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/Metaworkers-ai/governedmemory/security/policy
+    about: Report security issues privately; do not open a public issue.
+  - name: Community support
+    url: https://discord.gg/4XFAyrMYa6
+    about: Ask setup and integration questions in Discord.

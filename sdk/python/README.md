@@ -5,8 +5,12 @@ Thin Python client for a self-hosted [GovernedMemory](https://github.com/Metawor
 No third-party dependencies — stdlib `urllib.request` only. This talks to a running server over HTTP; it doesn't touch Postgres or any governance logic directly. Run the server first (see the main repo's `deploy/docker-compose.yml`), then:
 
 ```bash
-pip install -e sdk/python   # not yet published to PyPI
+python -m pip install "metaworkers==0.1.0"
 ```
+
+The stable package is published on PyPI. For local source changes, use
+`python -m pip install -e ./sdk/python` from the repository root. The package is
+stdlib-only and does not install Postgres, FastAPI, or a local embedding stack.
 
 ```python
 from metaworkers import GovernedMemory, Source
@@ -14,7 +18,9 @@ from metaworkers import GovernedMemory, Source
 mem = GovernedMemory(base_url="http://localhost:8000", api_key="some-secret-key")
 
 mem.write(
-    customer_id="cust-1", agent_id="cx-1", session_id="s-1",
+    customer_id="cust-1",
+    agent_id="cx-1",
+    session_id="s-1",
     content="customer prefers email contact",
     source=Source(type="user", ref="msg-1001", confidence=0.9),
     purpose=["cx_support"],
@@ -22,7 +28,10 @@ mem.write(
 
 results = mem.retrieve(
     query="how does this customer want to be contacted?",
-    agent_id="cx-1", session_id="s-1", purpose="cx_support", k=5,
+    agent_id="cx-1",
+    session_id="s-1",
+    purpose="cx_support",
+    k=5,
 )
 
 mem.quarantine("mem-uuid")
@@ -30,9 +39,9 @@ mem.delete("mem-uuid")
 events = mem.audit()
 
 # E6 — provenance lineage + cascade purge
-lineage = mem.provenance("mem-uuid")          # {memory_id, ancestors, descendants}
-plan = mem.cascade_preview("mem-uuid")        # dry run: what cascade delete would remove
-mem.delete("mem-uuid", cascade=True)          # hard-delete it and everything derived from it
+lineage = mem.provenance("mem-uuid")  # {memory_id, ancestors, descendants}
+plan = mem.cascade_preview("mem-uuid")  # dry run: what cascade delete would remove
+mem.delete("mem-uuid", cascade=True)  # hard-delete it and everything derived from it
 
 # Listing (no query/ranking/gate — plain reads)
 customers = mem.list_customers()

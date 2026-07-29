@@ -1,0 +1,112 @@
+name: Publish Python package
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to validate (for example, v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  validate:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    outputs:
+      package_version: ${{ steps.version.outputs.package_version }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+      - name: Require tag to match package version
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          package_version="$(python - <<'PY'
+          import tomllib
+          from pathlib import Path
+
+          with Path("sdk/python/pyproject.toml").open("rb") as fh:
+              print(tomllib.load(fh)["project"]["version"])
+          PY
+          )"
+          echo "package_version=${package_version}" >> "$GITHUB_OUTPUT"
+          expected_tag="v${package_version}"
+          if [ "${RELEASE_TAG}" != "${expected_tag}" ]; then
+            echo "Refusing to publish: ${RELEASE_TAG} does not match ${expected_tag}."
+            exit 1
+          fi
+
+  build:
+    name: Build metaworkers distribution
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+      - name: Install build tooling
+        run: python -m pip install --upgrade build
+      - name: Build wheel and source distribution
+        working-directory: sdk/python
+        run: python -m build
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: metaworkers-dist
+          path: sdk/python/dist/*
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/metaworkers
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: metaworkers-dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # v1.14.1
+
+  verify-package-channel:
+    name: Verify PyPI installation
+    needs: [validate, publish]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+      - name: Install the published package from PyPI
+        env:
+          PACKAGE_VERSION: ${{ needs.validate.outputs.package_version }}
+        run: |
+          set -euo pipefail
+          package="metaworkers==${PACKAGE_VERSION}"
+          for attempt in $(seq 1 12); do
+            if python -m pip install --no-cache-dir --index-url https://pypi.org/simple "$package"; then
+              break
+            fi
+            if [ "$attempt" -eq 12 ]; then
+              echo "PyPI did not expose $package after publication."
+              exit 1
+            fi
+            sleep 10
+          done
+      - name: Import the published package
+        run: python -c "from metaworkers import GovernedMemory, Source; print(GovernedMemory, Source)"
