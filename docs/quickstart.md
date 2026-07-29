@@ -36,6 +36,15 @@ for Postgres/API/web readiness, and prints clickable URLs. Open the web URL and:
    example. The flagged record must be excluded.
 4. Open **Audit Log** and confirm the write decision and hash-chain fields.
 
+Once the wrapper reports the URLs, the lightweight endpoint check can verify the
+API and console without touching memory data:
+
+```bash
+python scripts/smoke_quickstart.py \
+  --api-url http://localhost:8000 \
+  --web-url http://localhost:3000
+```
+
 ## Lifecycle commands
 
 ```bash
@@ -44,7 +53,7 @@ for Postgres/API/web readiness, and prints clickable URLs. Open the web URL and:
 ./scripts/quickstart.sh         # start and reseed the demo
 ```
 
-PowerShell uses the equivalent `./scripts/quickstart.ps1 down` and `reset`
+PowerShell uses the equivalent `.\scripts\quickstart.ps1 down` and `reset`
 commands. Use `reset` only for a disposable demo database.
 
 ## Troubleshooting
@@ -59,5 +68,5 @@ commands. Use `reset` only for a disposable demo database.
   for the seed service to complete.
 
 For the underlying API and Python client, see the [REST API and SDK section in
-the README](../README.md#rest-api-e7--self-hosted). For the next integration
+the README](../README.md#the-smallest-api-example). For the next integration
 step, see the [Mem0 adapter guide](https://github.com/Metaworkers-ai/governedmemory/blob/main/docs/integrations/mem0.md).
