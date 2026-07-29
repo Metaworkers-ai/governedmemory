@@ -1,0 +1,43 @@
+name: Bug report
+description: Report a reproducible problem in GovernedMemory
+title: "bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not include customer data, secrets, API keys, or memory contents.
+        For security vulnerabilities, use SECURITY.md instead of a public issue.
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Docker version, Python/Node version, and branch or release.
+      placeholder: macOS 15, Docker Desktop 4.x, governedmemory main
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: List the smallest safe reproduction using synthetic data.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs
+      description: Remove tokens, URLs with credentials, customer IDs, and memory content.

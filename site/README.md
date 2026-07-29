@@ -6,8 +6,9 @@ in review vs. next, and a self-host quickstart. Separate in purpose from
 [`web/`](../web) (the authenticated internal console) — this page is public and
 requires no backend to load.
 
-**Live:** https://d1t8rv0ba48g0k.cloudfront.net *(placeholder URL — swap once a
-custom domain is attached)*
+**Live:** https://d1t8rv0ba48g0k.cloudfront.net
+
+**Hosted demo:** https://demo.metaworkers.ai/ (public, synthetic data only)
 
 ## Preview locally
 
@@ -22,19 +23,19 @@ xdg-open site/index.html  # Linux
 
 ## Deploy
 
-Currently deployed manually to S3 + CloudFront (private bucket, CloudFront reads it
-via Origin Access Control — no public S3 access):
+The canonical deployment is S3 + CloudFront (private bucket, CloudFront reads it
+via Origin Access Control — no public S3 access). Pushes to `main` that touch
+`site/` are deployed by `.github/workflows/site.yml` once the repository
+environment is configured:
 
-```bash
-aws s3 cp site/index.html s3://metaworkers-governedmemory-site/index.html \
-  --content-type "text/html; charset=utf-8" \
-  --cache-control "public, max-age=300"
+Required GitHub environment values for `production-site`:
 
-aws cloudfront create-invalidation \
-  --distribution-id E1OQ1IZJWY5JA6 \
-  --paths "/*"
-```
+- secret `SITE_AWS_ROLE_ARN`: an AWS IAM role trusted by GitHub Actions OIDC;
+- variable `SITE_AWS_REGION` (defaults to `ap-south-1`);
+- variable `SITE_S3_BUCKET`;
+- variable `SITE_CLOUDFRONT_DISTRIBUTION_ID`.
 
-Bucket and distribution live in the `ap-south-1` AWS account. No CI/CD wired up yet —
-a follow-up would be a GitHub Actions job that runs this on every push to `main`
-touching `site/`.
+The custom-domain step is intentionally separate: choose the final hostname,
+add it as a CloudFront alternate domain with an ACM certificate in `us-east-1`,
+then point DNS at the distribution. Until that is completed, the CloudFront URL
+above remains the canonical project-site URL.

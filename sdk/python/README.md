@@ -5,8 +5,12 @@ Thin Python client for a self-hosted [GovernedMemory](https://github.com/Metawor
 No third-party dependencies — stdlib `urllib.request` only. This talks to a running server over HTTP; it doesn't touch Postgres or any governance logic directly. Run the server first (see the main repo's `deploy/docker-compose.yml`), then:
 
 ```bash
-pip install -e sdk/python   # not yet published to PyPI
+python -m pip install "metaworkers==0.1.0"
 ```
+
+The stable package is published on PyPI. For local source changes, use
+`python -m pip install -e ./sdk/python` from the repository root. The package is
+stdlib-only and does not install Postgres, FastAPI, or a local embedding stack.
 
 ```python
 from metaworkers import GovernedMemory, Source
