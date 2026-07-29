@@ -35,7 +35,11 @@ SOURCE_TYPE_BY_TOOL: dict[str, SourceType] = {
     # content on every MemoryStore.write(). A flagged description is tainted
     # untrusted by GovernanceEvaluationService even with this source type.
     "get_most_recent_transactions": SourceType.TRUSTED_SYSTEM,
-    "read_file": SourceType.UNTRUSTED_WEB,
+    # AgentDojo's virtual filesystem is the delivery channel. File content
+    # is still independently injection-scored by MemoryStore.write(); clean
+    # benchmark invoices may authorize work, while injected files become
+    # untrusted before any privileged action.
+    "read_file": SourceType.TRUSTED_SYSTEM,
     "get_balance": SourceType.TRUSTED_SYSTEM,
     "get_iban": SourceType.TRUSTED_SYSTEM,
     "get_scheduled_transactions": SourceType.TRUSTED_SYSTEM,
@@ -68,7 +72,7 @@ PRIVILEGED_ACTIONS: tuple[str, ...] = (
 # `governance.source_mapping_version`) so a later change to either table
 # above is traceable in historical results instead of silently altering
 # what old numbers meant.
-SOURCE_MAPPING_VERSION = "banking-v3-per-record-scored-outputs"
+SOURCE_MAPPING_VERSION = "banking-v4-content-scored-files"
 
 
 class UnmappedBankingToolError(Exception):

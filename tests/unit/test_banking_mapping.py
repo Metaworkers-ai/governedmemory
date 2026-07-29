@@ -50,7 +50,7 @@ class TestSourceTypeByTool:
         "tool_name,expected",
         [
             ("get_most_recent_transactions", SourceType.TRUSTED_SYSTEM),
-            ("read_file", SourceType.UNTRUSTED_WEB),
+            ("read_file", SourceType.TRUSTED_SYSTEM),
             ("get_balance", SourceType.TRUSTED_SYSTEM),
             ("get_iban", SourceType.TRUSTED_SYSTEM),
             ("get_scheduled_transactions", SourceType.TRUSTED_SYSTEM),
@@ -65,9 +65,9 @@ class TestSourceTypeByTool:
     def test_specific_mappings_match_the_lld_table(self, tool_name, expected):
         assert SOURCE_TYPE_BY_TOOL[tool_name] == expected
 
-    def test_only_read_file_is_untrusted_by_source(self):
-        """Banking v2 content-scores transaction descriptions instead of
-        auto-tainting every transaction response by source."""
+    def test_all_banking_tools_are_content_scored_not_auto_tainted(self):
+        """Banking v4 treats installed suite tools as delivery channels;
+        their content is still injection-scored on every write."""
         untrusted = {
             "untrusted_email",
             "untrusted_web",
@@ -75,7 +75,7 @@ class TestSourceTypeByTool:
         untrusted_tools = {
             name for name, st in SOURCE_TYPE_BY_TOOL.items() if st.value in untrusted
         }
-        assert untrusted_tools == {"read_file"}
+        assert untrusted_tools == set()
 
 
 class TestPrivilegedActions:
@@ -137,5 +137,5 @@ def test_source_mapping_version_is_a_non_empty_string():
     assert SOURCE_MAPPING_VERSION.strip() != ""
 
 
-def test_source_mapping_version_identifies_per_record_scoring():
-    assert SOURCE_MAPPING_VERSION == "banking-v3-per-record-scored-outputs"
+def test_source_mapping_version_identifies_content_scored_files():
+    assert SOURCE_MAPPING_VERSION == "banking-v4-content-scored-files"

@@ -364,10 +364,7 @@ class TestBuildResultArtifact:
         assert artifact["governance"]["blocked_actions"] == 1
         assert artifact["governance"]["memory_ids"] == ["mem-1", "mem-2"]
         assert artifact["governance"]["audit_ids"] == ["audit-1", "audit-2"]
-        assert (
-            artifact["governance"]["source_mapping_version"]
-            == "banking-v3-per-record-scored-outputs"
-        )
+        assert artifact["governance"]["source_mapping_version"] == "banking-v4-content-scored-files"
         assert artifact["governance"]["gate_policy"] == "tool_outputs_only"
         assert artifact["status"] == "completed"
         assert artifact["infrastructure_errors"] == []
@@ -432,11 +429,31 @@ class TestBuildResultArtifact:
 class TestRunGovernedBankingTaskEndToEnd:
     """Exercised against the REAL Banking suite's real ground-truth data.
 
-    Banking v2 content-scores `get_most_recent_transactions`: benign
-    transaction descriptions delivered by the bank API remain trusted,
-    while scanner-flagged descriptions become untrusted. `read_file`
-    remains untrusted by source.
+    Banking v4 content-scores both transaction records and file output:
+    benign content delivered by installed suite tools remains trusted,
+    while scanner-flagged content becomes untrusted.
     """
+
+    def test_user_task_0_benign_file_driven_payment_is_allowed(self, banking_suite):
+        """A clean benchmark invoice may support its intended payment."""
+        store = FakePolicyAwareStore()
+        user_task = banking_suite.user_tasks["user_task_0"]
+        llm = _NonRaisingGroundTruthLLM(user_task)
+
+        result = run_governed_banking_task(
+            banking_suite,
+            user_task,
+            None,
+            banking_suite.get_injection_vector_defaults(),
+            llm,
+            store,
+            agent_id="test-agent",
+        )
+
+        assert result["governance"]["blocked_actions"] == 0
+        assert result["governance"]["allowed_actions"] == 1
+        assert result["governance"]["untrusted_count"] == 0
+        assert result["agentdojo"]["utility"] is True
 
     def test_user_task_3_benign_ground_truth_is_allowed(self, banking_suite):
         """user_task_3's ground truth is
@@ -660,7 +677,7 @@ class TestRunBaselineBankingTask:
         task with a privileged action in its ground truth. On the original
         `banking-v1` mapping, this same task was blocked when governed
         (see the pre-Option-B history in the progress doc's section 5) --
-        with `banking-v3-per-record-scored-outputs` (Option B), the
+        with `banking-v4-content-scored-files` (Option B), the
         governed path now allows this task too
         (TestRunGovernedBankingTaskEndToEnd::test_user_task_3_benign_ground_truth_is_allowed),
         so this baseline result is no longer a contrasting "governed

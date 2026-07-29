@@ -1,16 +1,18 @@
 # GovernedMemory + AgentDojo (Banking suite)
 
-Status: **Step 11 targeted validation passed; full sweep remains pending.**
-Three live repetitions against `gpt-4o-2024-05-13` produced governed-benign
-utility `1.0`, false-block rate `0.0`, governed-attacked ASR `0.0`, and
-infrastructure-error rate `0.0`. The integration uses the Option B
-`banking-v3-per-record-scored-outputs` mapping:
+Status: **The v4 file-policy change passed repeated live validation; full
+sweep remains pending.** Across three live repetitions of the first two
+Banking tasks and one attack, governed benign utility was `1.0`,
+false-block rate was `0.0`, governed attacked ASR was `0.0`, and
+infrastructure-error rate was `0.0`. The integration uses the Option B
+`banking-v4-content-scored-files` mapping:
 recent-transaction results arrive through a trusted bank channel but each
 list item is written and injection-scored independently, preventing benign
-records from diluting an injected record. `read_file` remains untrusted by
-source. Historical smoke artifacts produced under earlier mapping versions
-must not be used to validate v3. Current targeted artifacts are under
-`results/option-b-v3-targeted-r3/`. This tracks
+records from diluting an injected record. Files delivered by AgentDojo's
+virtual filesystem are also content-scored: clean files may support the
+requested action, while scanner-flagged files become untrusted. Historical
+artifacts under earlier mapping versions must not be used to validate v4.
+This tracks
 Workstream A (`docs/traction-roadmap.md`) Ticket 1/2. For the full
 implementation history, design decisions, bug fixes, and test coverage,
 see [`docs/integrations/agentdojo-progress.md`](./agentdojo-progress.md).

@@ -111,7 +111,7 @@ account.
       isolation across independent attempts — already proven in
       automated tests, but a cheap sanity check here too).
 - [ ] Confirm every artifact reports
-      `source_mapping_version="banking-v3-per-record-scored-outputs"`.
+      `source_mapping_version="banking-v4-content-scored-files"`.
 - [ ] Compare the benign and attacked `user_task_3` runs to confirm the
       mapping improves normal utility without weakening pre-execution
       blocking for scanner-detected transaction injections.
