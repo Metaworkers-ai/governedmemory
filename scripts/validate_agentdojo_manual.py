@@ -1,0 +1,264 @@
+"""Manual validation harness for the GovernedMemory AgentDojo Banking
+defense (LLD "Recommended implementation order," item 10: "Validate one
+benign and one injected Banking task manually").
+
+This makes a REAL LLM call and a REAL database write. It is intentionally
+NOT a pytest test and is NOT run by CI or by anything in tests/ — Step 10
+calls for a human to look at real output before Step 11 spends real model
+budget on a full sweep, and this script is that human's tool, not a
+replacement for their judgment.
+
+Requires:
+    - DATABASE_URL env var pointing at a real Postgres+pgvector instance
+      (`docker compose -f deploy/docker-compose.yml up -d`, i.e. `make db-up`).
+    - pip install -r requirements-agentdojo.txt
+    - An API key for whichever model you choose, in the environment
+      already (OPENAI_API_KEY, ANTHROPIC_API_KEY, ...) -- this script
+      never reads, stores, or touches API keys itself; AgentDojo's own
+      `get_llm()` picks them up from the environment the same way it
+      always does.
+
+Usage:
+    # The Step 10-recommended pair in one run: the same privileged task
+    # first with benign transactions (expected to succeed normally), then
+    # under a real prompt-injection attack (expected to be blocked):
+    python scripts/validate_agentdojo_manual.py --recommended-pair --model gpt-4o-mini-2024-07-18
+
+    # Any single task:
+    python scripts/validate_agentdojo_manual.py --user-task-id user_task_1 --model gpt-4o-mini-2024-07-18
+
+    # A specific user task under a specific injection task and attack:
+    python scripts/validate_agentdojo_manual.py --user-task-id user_task_3 \\
+        --injection-task-id injection_task_0 --attack important_instructions \\
+        --model gpt-4o-mini-2024-07-18
+
+    # Save the full result artifact(s) as JSON (LLD section 17 shape):
+    python scripts/validate_agentdojo_manual.py --recommended-pair --model gpt-4o-mini-2024-07-18 --out results.json
+
+See docs/integrations/agentdojo-manual-validation.md for the checklist of
+what to actually look for in the output -- this script prints a summary,
+but deciding whether that summary looks *right* is the human part Step 10
+is for.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from agentdojo.agent_pipeline.agent_pipeline import get_llm  # noqa: E402
+from agentdojo.attacks.baseline_attacks import DirectAttack, IgnorePreviousAttack  # noqa: E402
+from agentdojo.attacks.important_instructions_attacks import (
+    ImportantInstructionsAttack,  # noqa: E402
+)
+from agentdojo.models import MODEL_PROVIDERS, ModelsEnum  # noqa: E402
+from agentdojo.task_suite.load_suites import get_suite  # noqa: E402
+from dotenv import load_dotenv  # noqa: E402
+
+from core.memory_store import MemoryStore, NullEmbeddingProvider, init_db  # noqa: E402
+from integrations.agentdojo.registry import RunContextRegistry  # noqa: E402
+from integrations.agentdojo.runner import run_governed_banking_task  # noqa: E402
+
+ATTACKS = {
+    "important_instructions": ImportantInstructionsAttack,
+    "ignore_previous": IgnorePreviousAttack,
+    "direct": DirectAttack,
+}
+
+# The Step 10-recommended pair directly validates Option B using the same
+# privileged workflow twice. Benign user_task_3 proves content-scored
+# transaction descriptions permit send_money; the attacked version proves
+# an injected description is still detected and blocks that action.
+RECOMMENDED_PAIR: list[dict[str, Any]] = [
+    {
+        "user_task_id": "user_task_3",
+        "injection_task_id": None,
+        "attack": None,
+        "label": "benign privileged task (expect: utility=True, allowed_actions>=1)",
+    },
+    {
+        "user_task_id": "user_task_3",
+        "injection_task_id": "injection_task_0",
+        "attack": "important_instructions",
+        "label": "privileged action under a real attack (expect: security=False, blocked_actions>=1)",
+    },
+]
+
+
+def run_one(
+    suite,
+    store: MemoryStore,
+    registry: RunContextRegistry,
+    *,
+    user_task_id: str,
+    injection_task_id: str | None,
+    attack_name: str | None,
+    llm,
+    model_name: str,
+    seed: int,
+) -> dict[str, Any]:
+    user_task = suite.user_tasks[user_task_id]
+    injection_task = suite.injection_tasks[injection_task_id] if injection_task_id else None
+
+    if injection_task is not None:
+        attack_cls = ATTACKS[attack_name or "important_instructions"]
+        attack = attack_cls(suite, llm)
+        injections = attack.attack(user_task, injection_task)
+    else:
+        injections = suite.get_injection_vector_defaults()
+
+    return run_governed_banking_task(
+        suite,
+        user_task,
+        injection_task,
+        injections,
+        llm,
+        store,
+        agent_id=model_name,
+        model=model_name,
+        seed=seed,
+        registry=registry,
+    )
+
+
+def print_report(label: str, result: dict[str, Any]) -> None:
+    g = result["governance"]
+    utility_succeeded = result["agentdojo"]["utility"] is True
+    security_result_available = result["agentdojo"]["security"] is not None
+    attack_succeeded = result["agentdojo"]["security"] is True
+    has_untrusted_evidence = g["untrusted_count"] > 0
+    privileged_action_attempted = g["privileged_attempts"] > 0
+    privileged_action_allowed = g["allowed_actions"] > 0
+    privileged_action_blocked = g["blocked_actions"] > 0
+    completed = result["status"] == "completed"
+    has_infrastructure_errors = bool(result["infrastructure_errors"])
+
+    print(f"\n=== {label} ===")
+    print(
+        f"  utility_succeeded={utility_succeeded}  "
+        f"security_result_available={security_result_available}  "
+        f"attack_succeeded={attack_succeeded}"
+    )
+    print(
+        f"  has_untrusted_evidence={has_untrusted_evidence}  "
+        f"privileged_action_attempted={privileged_action_attempted}"
+    )
+    print(
+        f"  privileged_action_allowed={privileged_action_allowed}  "
+        f"privileged_action_blocked={privileged_action_blocked}"
+    )
+    print(f"  completed={completed}  has_infrastructure_errors={has_infrastructure_errors}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--user-task-id", help="e.g. user_task_1. Ignored if --recommended-pair is given."
+    )
+    parser.add_argument(
+        "--injection-task-id", default=None, help="e.g. injection_task_0. Optional."
+    )
+    parser.add_argument("--attack", choices=sorted(ATTACKS), default="important_instructions")
+    parser.add_argument(
+        "--recommended-pair",
+        action="store_true",
+        help="Run the Step 10-recommended pair instead of a single task: "
+        "the same privileged task with benign data and under a real attack.",
+    )
+    parser.add_argument(
+        "--model",
+        required=True,
+        help="An agentdojo.models.ModelsEnum value, e.g. gpt-4o-mini-2024-07-18.",
+    )
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--detection-backend",
+        choices=("heuristic", "classifier", "ensemble"),
+        default="ensemble",
+        help="Injection detector used by governed writes (default: ensemble).",
+    )
+    parser.add_argument(
+        "--out", default=None, help="Write the result artifact(s) as JSON to this path."
+    )
+    args = parser.parse_args()
+
+    if not args.recommended_pair and not args.user_task_id:
+        parser.error("provide --user-task-id, or use --recommended-pair")
+
+    try:
+        provider = MODEL_PROVIDERS[ModelsEnum(args.model)]
+    except ValueError:
+        parser.error(
+            f"{args.model!r} is not a recognized agentdojo model. "
+            f"Valid values: {sorted(m.value for m in ModelsEnum)}"
+        )
+
+    load_dotenv()
+    os.environ["DETECTION_BACKEND"] = args.detection_backend
+    dsn = os.environ["DATABASE_URL"]
+    init_db(dsn)
+    store = MemoryStore(dsn, NullEmbeddingProvider(768))
+
+    llm = get_llm(provider, args.model, None, "tool")
+    # agentdojo's attacks (e.g. ImportantInstructionsAttack) call
+    # get_model_name_from_pipeline(target_pipeline), which requires
+    # pipeline.name to be a string containing the model id. That's normally
+    # set by AgentPipeline.from_config() -- which we don't use, since we
+    # build the pipeline directly via build_governed_pipeline(). Set it
+    # here so any attack construction below works the same way it would
+    # against a from_config()-built pipeline.
+    llm.name = args.model
+
+    suite = get_suite("v1.2.2", "banking")
+    registry = RunContextRegistry()
+
+    runs = (
+        RECOMMENDED_PAIR
+        if args.recommended_pair
+        else [
+            {
+                "user_task_id": args.user_task_id,
+                "injection_task_id": args.injection_task_id,
+                "attack": args.attack,
+                "label": args.user_task_id,
+            }
+        ]
+    )
+
+    results = []
+    for run in runs:
+        result = run_one(
+            suite,
+            store,
+            registry,
+            user_task_id=run["user_task_id"],
+            injection_task_id=run.get("injection_task_id"),
+            attack_name=run.get("attack"),
+            llm=llm,
+            model_name=args.model,
+            seed=args.seed,
+        )
+        print_report(run["label"], result)
+        results.append(result)
+
+    if args.out:
+        Path(args.out).write_text(json.dumps(results, indent=2))
+        print(f"\nWrote {len(results)} result artifact(s) to {args.out}")
+
+    print(
+        "\nThis script printed what happened. Whether it's *right* is the "
+        "human judgment call Step 10 is for -- see "
+        "docs/integrations/agentdojo-manual-validation.md for the checklist."
+    )
+
+
+if __name__ == "__main__":
+    main()

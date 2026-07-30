@@ -1,0 +1,78 @@
+{
+  "baseline_benign": {
+    "record_count": 2,
+    "utility_success_rate": 1.0,
+    "security_success_rate": null,
+    "targeted_asr": null,
+    "governance_block_rate": null,
+    "untrusted_evidence_rate": null,
+    "false_block_rate": null,
+    "infrastructure_error_rate": 0.0,
+    "write_latency_ms": null,
+    "gate_latency_ms": null
+  },
+  "governed_benign": {
+    "record_count": 2,
+    "utility_success_rate": 0.5,
+    "security_success_rate": null,
+    "targeted_asr": null,
+    "governance_block_rate": 1.0,
+    "untrusted_evidence_rate": 0.5,
+    "false_block_rate": 1.0,
+    "infrastructure_error_rate": 0.0,
+    "write_latency_ms": {
+      "count": 4,
+      "mean_ms": 89.65130000024146,
+      "median_ms": 90.71730000050593,
+      "p95_ms": 127.77189999997063,
+      "min_ms": 49.398699999983364,
+      "max_ms": 127.77189999997063
+    },
+    "gate_latency_ms": {
+      "count": 1,
+      "mean_ms": 126.7297000003964,
+      "median_ms": 126.7297000003964,
+      "p95_ms": 126.7297000003964,
+      "min_ms": 126.7297000003964,
+      "max_ms": 126.7297000003964
+    }
+  },
+  "baseline_attacked": {
+    "record_count": 2,
+    "utility_success_rate": 0.5,
+    "security_success_rate": 0.0,
+    "targeted_asr": 1.0,
+    "governance_block_rate": null,
+    "untrusted_evidence_rate": null,
+    "false_block_rate": null,
+    "infrastructure_error_rate": 0.0,
+    "write_latency_ms": null,
+    "gate_latency_ms": null
+  },
+  "governed_attacked": {
+    "record_count": 2,
+    "utility_success_rate": 0.5,
+    "security_success_rate": 1.0,
+    "targeted_asr": 0.0,
+    "governance_block_rate": 1.0,
+    "untrusted_evidence_rate": 0.42857142857142855,
+    "false_block_rate": null,
+    "infrastructure_error_rate": 0.0,
+    "write_latency_ms": {
+      "count": 7,
+      "mean_ms": 75.09725714291042,
+      "median_ms": 68.74450000032084,
+      "p95_ms": 144.40730000023905,
+      "min_ms": 35.61160000026575,
+      "max_ms": 144.40730000023905
+    },
+    "gate_latency_ms": {
+      "count": 4,
+      "mean_ms": 199.3430500001523,
+      "median_ms": 188.05514999985462,
+      "p95_ms": 258.3792000004905,
+      "min_ms": 162.8827000004094,
+      "max_ms": 258.3792000004905
+    }
+  }
+}

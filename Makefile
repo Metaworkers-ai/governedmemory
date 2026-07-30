@@ -23,6 +23,10 @@ install-mem0:
 	pip install -e "sdk/python[mem0]"
 
 # ── API server ───────────────────────────────────────────────────────────────
+install-agentdojo:
+	pip install -r requirements-agentdojo.txt
+
+# ── API server (E7) ───────────────────────────────────────────────────────────
 
 api:
 	uvicorn api.main:app --reload --port 8000
@@ -57,6 +61,8 @@ docs-check:
 
 smoke:
 	python scripts/smoke_quickstart.py
+test-agentdojo-contract:
+	pytest tests/contract/ -v
 
 test:
 	pytest -v --cov=core --cov-report=term-missing
@@ -70,3 +76,9 @@ lint:
 format:
 	ruff format core/ api/ tests/ sdk/python/ integrations/ examples/ scripts/check_docs_links.py scripts/smoke_quickstart.py
 	ruff check --fix core/ api/ tests/ sdk/python/ integrations/ scripts/
+	ruff check core/ api/ tests/ sdk/python/ integrations/
+	ruff format --check core/ api/ tests/ sdk/python/ integrations/
+
+format:
+	ruff format core/ api/ tests/ sdk/python/ integrations/
+	ruff check --fix core/ api/ tests/ sdk/python/ integrations/
