@@ -13,6 +13,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
+from unittest.mock import sentinel
 
 import pytest
 
@@ -49,6 +50,90 @@ class TestTag:
         )
 
         assert tagged["run_metadata"]["detection_backend"] == "ensemble"
+
+
+class TestBuildLlm:
+    def test_current_gemini_uses_ai_studio_api_key(self, monkeypatch):
+        monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+        monkeypatch.delenv("GEMINI_FORCE_IPV4", raising=False)
+        client_calls = []
+        llm_calls = []
+
+        def fake_client(**kwargs):
+            client_calls.append(kwargs)
+            return sentinel.client
+
+        def fake_google_llm(model, client):
+            llm_calls.append((model, client))
+            return sentinel.llm
+
+        monkeypatch.setattr(run_agentdojo_benchmark.genai, "Client", fake_client)
+        monkeypatch.setattr(run_agentdojo_benchmark, "GoogleLLM", fake_google_llm)
+
+        result = run_agentdojo_benchmark.build_llm("gemini-2.5-flash")
+
+        assert result is sentinel.llm
+        assert client_calls == [{"api_key": "test-gemini-key"}]
+        assert llm_calls == [("gemini-2.5-flash", sentinel.client)]
+
+    def test_current_gemini_can_force_ipv4(self, monkeypatch):
+        monkeypatch.setenv("GEMINI_FORCE_IPV4", "1")
+        transport_calls = []
+        client_calls = []
+
+        def fake_transport(**kwargs):
+            transport_calls.append(kwargs)
+            return run_agentdojo_benchmark.httpx.MockTransport(
+                lambda request: run_agentdojo_benchmark.httpx.Response(200, request=request)
+            )
+
+        def fake_genai_client(**kwargs):
+            client_calls.append(kwargs)
+            return sentinel.client
+
+        monkeypatch.setattr(run_agentdojo_benchmark.httpx, "HTTPTransport", fake_transport)
+        monkeypatch.setattr(run_agentdojo_benchmark.genai, "Client", fake_genai_client)
+
+        result = run_agentdojo_benchmark._build_ai_studio_client("test-gemini-key")
+
+        assert result is sentinel.client
+        assert transport_calls == [{"local_address": "0.0.0.0"}]
+        assert client_calls[0]["api_key"] == "test-gemini-key"
+        assert isinstance(
+            client_calls[0]["http_options"].httpx_client,
+            run_agentdojo_benchmark.httpx.Client,
+        )
+        client_calls[0]["http_options"].httpx_client.close()
+
+    def test_current_gemini_requires_api_key(self, monkeypatch):
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+        with pytest.raises(RuntimeError, match="GEMINI_API_KEY"):
+            run_agentdojo_benchmark.build_llm("gemini-2.5-flash")
+
+    def test_existing_agentdojo_model_keeps_original_routing(self, monkeypatch):
+        calls = []
+
+        def fake_get_llm(*args):
+            calls.append(args)
+            return sentinel.llm
+
+        monkeypatch.setattr(run_agentdojo_benchmark, "get_llm", fake_get_llm)
+
+        result = run_agentdojo_benchmark.build_llm("gpt-4o-2024-05-13")
+
+        assert result is sentinel.llm
+        assert calls == [("openai", "gpt-4o-2024-05-13", None, "tool")]
+
+    def test_unknown_model_has_actionable_error(self):
+        with pytest.raises(ValueError, match="unsupported model.*gemini-2.5-flash"):
+            run_agentdojo_benchmark.build_llm("not-a-real-model")
+
+    def test_current_gemini_has_agentdojo_attack_family_alias(self):
+        assert (
+            run_agentdojo_benchmark.ATTACK_PIPELINE_NAMES["gemini-2.5-flash"]
+            == "gemini-2.5-flash-preview-04-17"
+        )
 
 
 class TestTaskSelection:

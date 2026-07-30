@@ -40,6 +40,12 @@ Usage:
 Requires DATABASE_URL, an API key for --model's provider, and
 pip install -r requirements-agentdojo.txt -- same as
 scripts/validate_agentdojo_manual.py.
+
+Current Gemini models use the Google AI Studio API:
+
+    export GEMINI_API_KEY="..."
+    python scripts/run_agentdojo_benchmark.py --model gemini-2.5-flash \
+        --out-dir results/full-gemini25-flash
 """
 
 from __future__ import annotations
@@ -57,13 +63,17 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import httpx  # noqa: E402
 from agentdojo.agent_pipeline.agent_pipeline import get_llm  # noqa: E402
+from agentdojo.agent_pipeline.llms.google_llm import GoogleLLM  # noqa: E402
 from agentdojo.attacks.important_instructions_attacks import (
     ImportantInstructionsAttack,  # noqa: E402
 )
 from agentdojo.models import MODEL_PROVIDERS, ModelsEnum  # noqa: E402
 from agentdojo.task_suite.load_suites import get_suite  # noqa: E402
 from dotenv import load_dotenv  # noqa: E402
+from google import genai  # noqa: E402
+from google.genai import types as genai_types  # noqa: E402
 
 from core.memory_store import MemoryStore, NullEmbeddingProvider, init_db  # noqa: E402
 from integrations.agentdojo.banking_mapping import SOURCE_MAPPING_VERSION  # noqa: E402
@@ -76,6 +86,47 @@ from integrations.agentdojo.runner import (  # noqa: E402
     run_baseline_banking_task,
     run_governed_banking_task,
 )
+
+AI_STUDIO_MODELS = frozenset({"gemini-2.5-flash"})
+ATTACK_PIPELINE_NAMES = {
+    # AgentDojo 0.1.35 maps this legacy ID to its Google-model attack prompt.
+    # The LLM client still sends the stable model ID above to Google.
+    "gemini-2.5-flash": "gemini-2.5-flash-preview-04-17",
+}
+
+
+def _build_ai_studio_client(api_key: str) -> genai.Client:
+    if os.getenv("GEMINI_FORCE_IPV4") == "1":
+        http_client = httpx.Client(transport=httpx.HTTPTransport(local_address="0.0.0.0"))
+        return genai.Client(
+            api_key=api_key,
+            http_options=genai_types.HttpOptions(httpx_client=http_client),
+        )
+    return genai.Client(api_key=api_key)
+
+
+def build_llm(model: str):
+    """Build the benchmark LLM, including current models absent from AgentDojo 0.1.35.
+
+    AgentDojo's pinned Google provider supports only retired model IDs and
+    constructs a Vertex AI client. Keep its routing for every bundled model,
+    while allowing the current Gemini model through Google AI Studio.
+    """
+    if model in AI_STUDIO_MODELS:
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise RuntimeError(f"GEMINI_API_KEY is required when --model is {model!r}")
+        return GoogleLLM(model, _build_ai_studio_client(api_key))
+
+    try:
+        provider = MODEL_PROVIDERS[ModelsEnum(model)]
+    except ValueError as exc:
+        supported_overrides = ", ".join(sorted(AI_STUDIO_MODELS))
+        raise ValueError(
+            f"unsupported model {model!r}; AgentDojo 0.1.35 models plus "
+            f"these current models are supported: {supported_overrides}"
+        ) from exc
+    return get_llm(provider, model, None, "tool")
 
 
 def _tag(
@@ -227,13 +278,12 @@ def run_sweep(
     include_user_input_in_gate: bool = False,
     run_metadata: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    provider = MODEL_PROVIDERS[ModelsEnum(model)]
-    llm = get_llm(provider, model, None, "tool")
+    llm = build_llm(model)
     # See scripts/validate_agentdojo_manual.py's comment on this same line:
     # attacks like ImportantInstructionsAttack require pipeline.name to be
     # set, which AgentPipeline.from_config() normally does but our direct
     # pipeline construction doesn't.
-    llm.name = model
+    llm.name = ATTACK_PIPELINE_NAMES.get(model, model)
     suite = get_suite("v1.2.2", "banking")
     if run_metadata is None:
         run_metadata = collect_run_metadata(include_user_input_in_gate=include_user_input_in_gate)

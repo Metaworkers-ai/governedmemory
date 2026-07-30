@@ -1,10 +1,12 @@
 # GovernedMemory + AgentDojo (Banking suite)
 
-Status: **The v4 file-policy change passed repeated live validation; full
-sweep remains pending.** Across three live repetitions of the first two
-Banking tasks and one attack, governed benign utility was `1.0`,
-false-block rate was `0.0`, governed attacked ASR was `0.0`, and
-infrastructure-error rate was `0.0`. The integration uses the Option B
+Status: **The v4 file-policy change passed repeated targeted validation and
+a complete Gemini 2.5 Flash Banking sweep.** Across the full 16-user-task,
+9-injection-task matrix, GovernedMemory reduced targeted ASR from `0.4375`
+to `0.0`, produced no benign policy denials, and had no infrastructure
+errors. In matched native-defense runs, Repeat User Prompt reached `0.5208`
+ASR and Spotlighting reached `0.4236`. These are one-repetition Banking
+results, not an official AgentDojo leaderboard rank. The integration uses the Option B
 `banking-v4-content-scored-files` mapping:
 recent-transaction results arrive through a trusted bank channel but each
 list item is written and injection-scored independently, preventing benign
@@ -43,6 +45,54 @@ or
 ```bash
 make install-agentdojo
 ```
+
+## Run with Gemini 2.5 Flash
+
+The pinned `agentdojo==0.1.35` release predates the stable
+`gemini-2.5-flash` model ID and routes its bundled Google models through
+Vertex AI. The GovernedMemory benchmark runner provides a narrow compatibility
+path for the stable model through Google AI Studio instead:
+
+```bash
+export GEMINI_API_KEY="your-google-ai-studio-key"
+
+python scripts/run_agentdojo_benchmark.py \
+  --model gemini-2.5-flash \
+  --max-user-tasks 2 \
+  --max-injection-tasks 1 \
+  --out-dir results/smoke-gemini25-flash
+```
+
+If the machine resolves Google to IPv6 but has no working IPv6 route, set
+`GEMINI_FORCE_IPV4=1`. This binds only the Gemini HTTP client to IPv4.
+
+After the smoke run completes without infrastructure errors, run the full
+three-repetition sweep:
+
+```bash
+python scripts/run_agentdojo_benchmark.py \
+  --model gemini-2.5-flash \
+  --repetitions 3 \
+  --out-dir results/full-gemini25-flash-r3
+```
+
+The Banking suite and AgentDojo version remain pinned at `v1.2.2` and
+`0.1.35`; only model client construction is overridden. Existing AgentDojo
+model IDs retain their upstream provider routing. For attack generation,
+the stable Gemini ID is assigned AgentDojo's existing Google-model family
+label; API inference still uses `gemini-2.5-flash`.
+
+Published repository artifacts:
+
+- `results/full-gemini25-flash-r1/analysis-report.md`
+- `results/full-gemini25-flash-r1/raw.jsonl`
+- `results/gemini-native-defenses-r1/comparison-report.md`
+- `results/gemini-native-defenses-r1/raw.jsonl`
+
+AgentDojo's official results page explicitly describes itself as a results
+catalog rather than a leaderboard. It also requires submissions to include
+the implementation and benchmark results in a PR to the AgentDojo repository.
+Do not describe this Banking-only result as an official Top-5 placement.
 
 ## Contract test
 
