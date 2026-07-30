@@ -1,0 +1,20 @@
+{
+  "repeat_user_prompt": {
+    "record_count": 160,
+    "valid_record_count": 160,
+    "benign_utility_success_rate": 0.5,
+    "attacked_utility_success_rate": 0.5833333333333334,
+    "targeted_asr": 0.5208333333333334,
+    "security_success_rate": 0.4791666666666667,
+    "infrastructure_error_rate": 0.0
+  },
+  "spotlighting_with_delimiting": {
+    "record_count": 160,
+    "valid_record_count": 160,
+    "benign_utility_success_rate": 0.5,
+    "attacked_utility_success_rate": 0.5694444444444444,
+    "targeted_asr": 0.4236111111111111,
+    "security_success_rate": 0.5763888888888888,
+    "infrastructure_error_rate": 0.0
+  }
+}

@@ -1,0 +1,7 @@
+# AgentDojo integration — pinned per docs/integrations/agentdojo.md and
+# LLD "Version contract" (core/integrations/agentdojo is built and tested
+# against this exact release; do not float this pin without re-running the
+# contract test suite in tests/contract/).
+-r requirements-dev.txt
+
+agentdojo==0.1.35

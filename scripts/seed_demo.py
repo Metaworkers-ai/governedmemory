@@ -56,6 +56,7 @@ def main() -> None:
 
     load_dotenv()
     dsn = os.environ["DATABASE_URL"]
+    print(dsn)
     init_db(dsn)
 
     if args.reset:

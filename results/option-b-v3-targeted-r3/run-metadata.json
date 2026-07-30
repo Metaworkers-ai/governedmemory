@@ -1,0 +1,16 @@
+{
+  "git_commit": "c289c0556f582b0bf9108adf102b5b9a19bc99d1",
+  "agentdojo_version": "0.1.35",
+  "detection_backend": "ensemble",
+  "injection_threshold": 0.7,
+  "severe_injection_threshold": 0.95,
+  "classifier_source": "bundled_dataset",
+  "classifier_sha256": "ceaf4624f2cbfb6ea606d3ed605f5b518ef9211799ac53e49aea37a0f213152f",
+  "source_mapping_version": "banking-v3-per-record-scored-outputs",
+  "gate_policy": "tool_outputs_only",
+  "attack": "ImportantInstructionsAttack",
+  "seed_applied_to_model": false,
+  "model_determinism": "not guaranteed; use --repetitions for repeated attempts",
+  "repetitions": 3,
+  "starting_recorded_seed": 0
+}

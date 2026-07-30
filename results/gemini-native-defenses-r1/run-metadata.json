@@ -1,0 +1,12 @@
+{
+  "model": "gemini-2.5-flash",
+  "suite": "banking",
+  "benchmark_version": "1.2.2",
+  "agentdojo_version": "0.1.35",
+  "attack": "ImportantInstructionsAttack",
+  "defenses": [
+    "repeat_user_prompt",
+    "spotlighting_with_delimiting"
+  ],
+  "repetitions": 1
+}
