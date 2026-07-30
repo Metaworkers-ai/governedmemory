@@ -24,12 +24,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from dotenv import load_dotenv
-
 from agentdojo.agent_pipeline.agent_pipeline import get_llm
 from agentdojo.attacks.important_instructions_attacks import ImportantInstructionsAttack
 from agentdojo.models import MODEL_PROVIDERS, ModelsEnum
 from agentdojo.task_suite.load_suites import get_suite
+from dotenv import load_dotenv
 
 from core.memory_store import MemoryStore, NullEmbeddingProvider, init_db
 from integrations.agentdojo.banking_policy import ensure_banking_policy
