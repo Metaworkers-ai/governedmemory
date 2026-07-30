@@ -4,7 +4,19 @@ import { useEffect, useState, useTransition } from "react";
 
 import { deleteMemoryAction, listMemoriesAction, quarantineMemoryAction } from "@/app/actions";
 import { useAppContext } from "@/components/AppContext";
-import { Button, Card, EmptyState, ErrorBanner, Field, Input, Select, SuccessBanner, TaintBadge } from "@/components/ui";
+import {
+  Button,
+  Card,
+  EmptyState,
+  ErrorBanner,
+  Field,
+  Input,
+  PageHeader,
+  Select,
+  Skeleton,
+  SuccessBanner,
+  TaintBadge,
+} from "@/components/ui";
 import type { MemoryRecord } from "@/lib/types";
 
 export default function GovernancePage() {
@@ -59,18 +71,26 @@ export default function GovernancePage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-lg font-semibold text-neutral-900">Quarantine / Delete</h1>
-        <p className="mt-1 text-sm text-neutral-600">
-          Acting on memories for customer <code className="font-mono">{customerId}</code> (change the
-          Customer field above to switch).
-        </p>
-      </div>
+    <div className="mx-auto max-w-4xl space-y-6">
+      <PageHeader
+        title="Quarantine / Delete"
+        description={
+          <>
+            Acting on memories for customer{" "}
+            <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-xs">{customerId}</code>{" "}
+            (change the Customer field above to switch).
+          </>
+        }
+      />
 
       {loadError && <ErrorBanner>{loadError}</ErrorBanner>}
 
-      {memories && memories.length === 0 ? (
+      {memories === null && !loadError ? (
+        <Card className="space-y-3">
+          <Skeleton className="h-9 w-full" />
+          <Skeleton className="h-9 w-1/3" />
+        </Card>
+      ) : memories && memories.length === 0 ? (
         <EmptyState>No memories for this customer yet.</EmptyState>
       ) : (
         <Card className="space-y-4">
@@ -84,24 +104,29 @@ export default function GovernancePage() {
             </Select>
           </Field>
           {selectedId && (
-            <div className="flex items-center gap-2 text-xs text-neutral-500">
+            <div className="flex items-center gap-2 text-xs text-[var(--color-muted)]">
               <TaintBadge taint={memories?.find((m) => m.id === selectedId)?.trust.taint ?? "trusted"} />
               <code className="font-mono">{selectedId}</code>
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-4 border-t border-neutral-100 pt-4">
+          <div className="grid grid-cols-1 gap-4 border-t border-[var(--color-border)] pt-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Field label="Quarantine reason">
                 <Input value={reason} onChange={(e) => setReason(e.target.value)} />
               </Field>
-              <Button variant="secondary" disabled={isPending || !selectedId} onClick={runQuarantine}>
+              <Button
+                variant="secondary"
+                loading={isPending}
+                disabled={isPending || !selectedId}
+                onClick={runQuarantine}
+              >
                 Quarantine
               </Button>
             </div>
             <div className="space-y-2">
-              <p className="text-sm font-medium text-neutral-700">Permanent removal</p>
-              <Button variant="danger" disabled={isPending || !selectedId} onClick={runDelete}>
+              <p className="text-sm font-medium text-[var(--color-text)]">Permanent removal</p>
+              <Button variant="danger" loading={isPending} disabled={isPending || !selectedId} onClick={runDelete}>
                 Delete permanently
               </Button>
             </div>

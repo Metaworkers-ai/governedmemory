@@ -6,14 +6,16 @@ export function ContextBar() {
   const { customerId, agentId, sessionId, setCustomerId, setAgentId, setSessionId } = useAppContext();
 
   const fieldClasses =
-    "rounded-md border border-neutral-300 bg-white px-2 py-1 text-sm text-neutral-900 focus:border-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500";
+    "rounded-lg border border-[var(--color-border)] bg-white px-2.5 py-1.5 text-sm text-[var(--color-text)] transition-colors focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20";
 
   return (
-    <div className="border-b border-neutral-200 bg-neutral-100">
-      <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-4 px-6 py-2 text-sm">
-        <span className="text-xs font-medium uppercase tracking-wide text-neutral-500">Context</span>
+    <div className="border-b border-[var(--color-border)] bg-slate-50">
+      <div className="flex w-full flex-wrap items-center gap-4 px-4 py-2.5 text-sm sm:px-6 lg:px-8">
+        <span className="text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
+          Context
+        </span>
         <label className="flex items-center gap-1.5">
-          <span className="text-neutral-600">Customer</span>
+          <span className="text-[var(--color-muted)]">Customer</span>
           <input
             className={fieldClasses}
             value={customerId}
@@ -21,11 +23,11 @@ export function ContextBar() {
           />
         </label>
         <label className="flex items-center gap-1.5">
-          <span className="text-neutral-600">Agent</span>
+          <span className="text-[var(--color-muted)]">Agent</span>
           <input className={fieldClasses} value={agentId} onChange={(e) => setAgentId(e.target.value)} />
         </label>
         <label className="flex items-center gap-1.5">
-          <span className="text-neutral-600">Session</span>
+          <span className="text-[var(--color-muted)]">Session</span>
           <input
             className={fieldClasses}
             value={sessionId}
