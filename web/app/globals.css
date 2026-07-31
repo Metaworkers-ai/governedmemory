@@ -5,7 +5,8 @@
 
   --color-primary: #2563eb;
   --color-primary-hover: #1d4ed8;
-  --color-secondary: #1e40af;
+  --color-secondary: #7c3aed;
+  --color-accent: #06b6d4;
   --color-bg: #f8fafc;
   --color-card: #ffffff;
   --color-text: #0f172a;
@@ -14,6 +15,7 @@
   --color-success: #22c55e;
   --color-warning: #f59e0b;
   --color-danger: #ef4444;
+  --color-navbar: #1e293b;
 
   --animate-fade-in: fade-in 0.35s ease-out both;
   --animate-slide-up: slide-up 0.35s ease-out both;
@@ -71,6 +73,27 @@
 }
 
 @layer utilities {
+  .gradient-primary {
+    background-image: linear-gradient(135deg, var(--color-primary), var(--color-secondary));
+  }
+
+  .gradient-primary-hover:hover {
+    background-image: linear-gradient(135deg, var(--color-primary-hover), var(--color-secondary));
+  }
+
+  .gradient-accent-text {
+    background-image: linear-gradient(135deg, var(--color-primary), var(--color-accent));
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+  }
+
+  .glass {
+    background-color: color-mix(in srgb, var(--color-navbar) 80%, transparent);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+
   .skeleton {
     position: relative;
     overflow: hidden;

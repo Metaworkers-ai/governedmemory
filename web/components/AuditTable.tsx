@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 
-import { Chip, EmptyState, Input, OutcomeBadge } from "@/components/ui";
+import { Chip, EmptyState, Input, OutcomeBadge, Pagination } from "@/components/ui";
 import type { AuditEvent } from "@/lib/types";
 
 const OUTCOME_ICON: Record<string, string> = {
@@ -11,9 +11,12 @@ const OUTCOME_ICON: Record<string, string> = {
   gated: "⚠",
 };
 
+const PAGE_SIZE = 15;
+
 export function AuditTable({ events }: { events: AuditEvent[] }) {
   const [outcomeFilter, setOutcomeFilter] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [page, setPage] = useState(0);
 
   const outcomes = useMemo(() => Array.from(new Set(events.map((e) => e.outcome))), [events]);
 
@@ -28,6 +31,15 @@ export function AuditTable({ events }: { events: AuditEvent[] }) {
       return true;
     });
   }, [events, outcomeFilter, query]);
+
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount - 1);
+  const pageItems = filtered.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE);
+
+  function updateFilter(fn: () => void) {
+    fn();
+    setPage(0);
+  }
 
   return (
     <div className="space-y-4">
@@ -46,15 +58,15 @@ export function AuditTable({ events }: { events: AuditEvent[] }) {
             className="pl-10"
             placeholder="Filter by op, agent, session, reason…"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => updateFilter(() => setQuery(e.target.value))}
           />
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Chip active={outcomeFilter === null} onClick={() => setOutcomeFilter(null)}>
+          <Chip active={outcomeFilter === null} onClick={() => updateFilter(() => setOutcomeFilter(null))}>
             All
           </Chip>
           {outcomes.map((o) => (
-            <Chip key={o} active={outcomeFilter === o} onClick={() => setOutcomeFilter(o)}>
+            <Chip key={o} active={outcomeFilter === o} onClick={() => updateFilter(() => setOutcomeFilter(o))}>
               {o}
             </Chip>
           ))}
@@ -78,7 +90,7 @@ export function AuditTable({ events }: { events: AuditEvent[] }) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--color-border)]">
-                {filtered.map((e) => (
+                {pageItems.map((e) => (
                   <tr key={e.id} className="transition-colors hover:bg-slate-50">
                     <td className="whitespace-nowrap px-4 py-3 text-[var(--color-muted)]">
                       {new Date(e.ts).toLocaleString()}
@@ -106,6 +118,8 @@ export function AuditTable({ events }: { events: AuditEvent[] }) {
           </div>
         </div>
       )}
+
+      <Pagination page={safePage} pageCount={pageCount} onChange={setPage} />
     </div>
   );
 }

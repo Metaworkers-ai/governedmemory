@@ -3,15 +3,18 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
-import { EmptyState, Input } from "@/components/ui";
+import { EmptyState, Input, Pagination } from "@/components/ui";
 import type { CustomerSummary } from "@/lib/types";
 
 type SortKey = "customer_id" | "memory_count" | "last_activity";
+
+const PAGE_SIZE = 10;
 
 export function CustomerTable({ customers }: { customers: CustomerSummary[] }) {
   const [filter, setFilter] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("last_activity");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [page, setPage] = useState(0);
 
   function toggleSort(key: SortKey) {
     if (key === sortKey) {
@@ -20,6 +23,7 @@ export function CustomerTable({ customers }: { customers: CustomerSummary[] }) {
       setSortKey(key);
       setSortDir("asc");
     }
+    setPage(0);
   }
 
   const filtered = useMemo(() => {
@@ -35,6 +39,10 @@ export function CustomerTable({ customers }: { customers: CustomerSummary[] }) {
     });
     return sorted;
   }, [customers, filter, sortKey, sortDir]);
+
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount - 1);
+  const pageItems = filtered.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE);
 
   const columns: { key: SortKey; label: string }[] = [
     { key: "customer_id", label: "Customer ID" },
@@ -58,7 +66,10 @@ export function CustomerTable({ customers }: { customers: CustomerSummary[] }) {
           className="pl-10"
           placeholder="Filter by customer ID…"
           value={filter}
-          onChange={(e) => setFilter(e.target.value)}
+          onChange={(e) => {
+            setFilter(e.target.value);
+            setPage(0);
+          }}
         />
       </div>
       {filtered.length === 0 ? (
@@ -84,7 +95,7 @@ export function CustomerTable({ customers }: { customers: CustomerSummary[] }) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--color-border)]">
-                {filtered.map((c) => (
+                {pageItems.map((c) => (
                   <tr key={c.customer_id} className="transition-colors hover:bg-slate-50">
                     <td className="px-4 py-3">
                       <Link
@@ -105,6 +116,8 @@ export function CustomerTable({ customers }: { customers: CustomerSummary[] }) {
           </div>
         </div>
       )}
+
+      <Pagination page={safePage} pageCount={pageCount} onChange={setPage} />
     </div>
   );
 }

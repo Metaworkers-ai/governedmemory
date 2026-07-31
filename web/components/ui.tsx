@@ -22,7 +22,7 @@ export function Card({
   return (
     <div
       className={`rounded-2xl border border-[var(--color-border)] bg-[var(--color-card)] p-6 shadow-sm transition-all duration-200 ${
-        hoverable ? "hover:-translate-y-0.5 hover:shadow-md" : ""
+        hoverable ? "hover:-translate-y-0.5 hover:border-[var(--color-primary)]/30 hover:shadow-lg hover:shadow-blue-900/5" : ""
       } ${className}`}
     >
       {children}
@@ -154,7 +154,7 @@ export function Button({
 }) {
   const variants = {
     primary:
-      "bg-[var(--color-primary)] text-white shadow-sm hover:bg-[var(--color-primary-hover)] active:scale-[0.98] disabled:bg-slate-300",
+      "gradient-primary gradient-primary-hover text-white shadow-sm shadow-blue-900/10 active:scale-[0.98] disabled:bg-slate-300 disabled:bg-none",
     secondary:
       "bg-white text-[var(--color-text)] border border-[var(--color-border)] hover:bg-slate-50 hover:border-slate-300 active:scale-[0.98] disabled:text-[var(--color-muted)]",
     danger:
@@ -237,8 +237,8 @@ export function Chip({
       onClick={onClick}
       className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
         active
-          ? "border-[var(--color-primary)] bg-blue-50 text-[var(--color-primary)]"
-          : "border-[var(--color-border)] bg-white text-[var(--color-muted)] hover:border-slate-300 hover:text-[var(--color-text)]"
+          ? "border-[var(--color-primary)]/40 bg-blue-50 text-[var(--color-primary)]"
+          : "border-[var(--color-border)] bg-white text-[var(--color-muted)] hover:border-[var(--color-accent)]/50 hover:text-[var(--color-text)]"
       }`}
     >
       {children}
@@ -283,10 +283,49 @@ export function Skeleton({ className = "" }: { className?: string }) {
   return <div className={`skeleton rounded-lg ${className}`} />;
 }
 
+export function Pagination({
+  page,
+  pageCount,
+  onChange,
+}: {
+  page: number;
+  pageCount: number;
+  onChange: (page: number) => void;
+}) {
+  if (pageCount <= 1) return null;
+  return (
+    <div className="flex items-center justify-between gap-4 px-1 py-1 text-sm text-[var(--color-muted)]">
+      <span>
+        Page {page + 1} of {pageCount}
+      </span>
+      <div className="flex items-center gap-2">
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={page === 0}
+          onClick={() => onChange(page - 1)}
+          aria-label="Previous page"
+        >
+          Previous
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={page >= pageCount - 1}
+          onClick={() => onChange(page + 1)}
+          aria-label="Next page"
+        >
+          Next
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export function PageHeader({ title, description }: { title: string; description?: ReactNode }) {
   return (
     <div className="animate-slide-up">
-      <h1 className="text-2xl font-semibold tracking-tight text-[var(--color-text)]">{title}</h1>
+      <h1 className="gradient-accent-text text-2xl font-semibold tracking-tight">{title}</h1>
       {description && <p className="mt-2 max-w-3xl text-sm leading-relaxed text-[var(--color-muted)]">{description}</p>}
     </div>
   );

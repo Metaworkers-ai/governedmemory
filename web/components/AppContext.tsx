@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
 interface WorkingContext {
   customerId: string;
@@ -43,11 +43,14 @@ export function AppContextProvider({ children }: { children: ReactNode }) {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ customerId, agentId, sessionId }));
   }, [customerId, agentId, sessionId]);
 
-  return (
-    <Ctx.Provider value={{ customerId, agentId, sessionId, setCustomerId, setAgentId, setSessionId }}>
-      {children}
-    </Ctx.Provider>
+  // Memoized so consumers only re-render when these values actually change,
+  // not on every render of a parent that happens to re-render this provider.
+  const value = useMemo(
+    () => ({ customerId, agentId, sessionId, setCustomerId, setAgentId, setSessionId }),
+    [customerId, agentId, sessionId],
   );
+
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
 export function useAppContext(): WorkingContext {
