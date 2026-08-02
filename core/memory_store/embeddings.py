@@ -167,9 +167,7 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         return resp.data[0].embedding
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        resp = self._client.embeddings.create(
-            input=texts, model=self._model, dimensions=self._dims
-        )
+        resp = self._client.embeddings.create(input=texts, model=self._model, dimensions=self._dims)
         return [d.embedding for d in resp.data]
 
     @property
