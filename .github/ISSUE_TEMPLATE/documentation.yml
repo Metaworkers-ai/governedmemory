@@ -1,0 +1,36 @@
+name: Documentation problem
+description: Report a stale, unclear, or broken documentation path
+title: "docs: "
+labels:
+  - documentation
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use synthetic examples only. Do not include secrets, customer data, or
+        memory contents. For security vulnerabilities, use SECURITY.md instead.
+  - type: input
+    id: page
+    attributes:
+      label: Page or command
+      description: Which page, link, or documented command needs attention?
+      placeholder: docs/quickstart.md
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is wrong?
+      description: Explain what is stale, confusing, or broken.
+    validations:
+      required: true
+  - type: textarea
+    id: suggested_change
+    attributes:
+      label: Suggested improvement
+      description: Include a corrected command or wording when possible.
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Docker, Python, or Node versions if relevant.

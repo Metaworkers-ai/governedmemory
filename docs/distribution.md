@@ -7,7 +7,9 @@ This page separates repository changes from account-level launch operations.
 - [Quickstart guide](quickstart.md) is a standalone entry point.
 - The README and project site link to the hosted sandbox.
 - The SDK is published to PyPI as stable `metaworkers==0.1.0`; the release
-  workflow also verifies a clean installation from PyPI.
+  workflow verifies the freshly published package, while the scheduled/manual
+  `pypi-smoke.yml` workflow checks later package availability. Neither is a
+  substitute for the branch-source install in CI.
 - Version tags build a wheel and source distribution through
   `.github/workflows/publish-python.yml`.
 - The project site has an OIDC-based S3/CloudFront deployment workflow, with

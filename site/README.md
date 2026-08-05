@@ -6,7 +6,7 @@ in review vs. next, and a self-host quickstart. Separate in purpose from
 [`web/`](../web) (the authenticated internal console) — this page is public and
 requires no backend to load.
 
-**Live:** https://d1t8rv0ba48g0k.cloudfront.net
+**Live:** https://governedmemory.metaworkers.ai/
 
 **Hosted demo:** https://demo.metaworkers.ai/ (public, synthetic data only)
 
@@ -24,9 +24,10 @@ xdg-open site/index.html  # Linux
 ## Deploy
 
 The canonical deployment is S3 + CloudFront (private bucket, CloudFront reads it
-via Origin Access Control — no public S3 access). Pushes to `main` that touch
-`site/` are deployed by `.github/workflows/site.yml` once the repository
-environment is configured:
+via Origin Access Control — no public S3 access). The production hostname above
+currently serves that distribution. Pushes to `main` that touch `site/` are
+deployed by `.github/workflows/site.yml` once the repository environment is
+configured:
 
 Required GitHub environment values for `production-site`:
 
@@ -35,7 +36,6 @@ Required GitHub environment values for `production-site`:
 - variable `SITE_S3_BUCKET`;
 - variable `SITE_CLOUDFRONT_DISTRIBUTION_ID`.
 
-The custom-domain step is intentionally separate: choose the final hostname,
-add it as a CloudFront alternate domain with an ACM certificate in `us-east-1`,
-then point DNS at the distribution. Until that is completed, the CloudFront URL
-above remains the canonical project-site URL.
+The current production hostname is the public entry point. If the hostname
+changes, add the replacement as a CloudFront alternate domain with an ACM
+certificate in `us-east-1`, then update DNS and this document together.
