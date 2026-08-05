@@ -71,6 +71,13 @@ services:
       # A replay after this claim window fails terminally rather than risking
       # a duplicate external write. Increase it for unusually slow Mem0 calls.
       GOVERNEDMEMORY_EXTERNAL_WRITE_CLAIM_TTL_SECONDS: ${GOVERNEDMEMORY_EXTERNAL_WRITE_CLAIM_TTL_SECONDS:-300}
+      # Optional -- enables real OpenAI embeddings (api/main.py:_build_embedder)
+      # instead of zero-vector search. Unset by default; pass through from the
+      # host/.env only if you want real semantic search. Never sent to the
+      # frontend -- read server-side only, by the openai SDK.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-768}
     ports:
       - "${API_HOST_PORT:-8000}:8000"
     depends_on:

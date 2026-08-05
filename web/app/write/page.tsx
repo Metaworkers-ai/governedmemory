@@ -4,7 +4,17 @@ import { useState, useTransition } from "react";
 
 import { writeMemoryAction } from "@/app/actions";
 import { useAppContext } from "@/components/AppContext";
-import { Button, Card, ErrorBanner, Field, Input, Select, SuccessBanner, Textarea } from "@/components/ui";
+import {
+  Button,
+  Card,
+  ErrorBanner,
+  Field,
+  Input,
+  PageHeader,
+  Select,
+  SuccessBanner,
+  Textarea,
+} from "@/components/ui";
 import { SOURCE_TYPES } from "@/lib/types";
 import type { MemoryRecord } from "@/lib/types";
 
@@ -85,30 +95,27 @@ export default function WritePage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-lg font-semibold text-neutral-900">Write a memory</h1>
-        <p className="mt-1 text-sm text-neutral-600">
-          Every write goes through the Write Governor: provenance → taint → injection scan → dedup →
-          embed → persist.
-        </p>
-      </div>
+    <div className="mx-auto max-w-4xl space-y-6">
+      <PageHeader
+        title="Write a memory"
+        description="Every write goes through the Write Governor: provenance → taint → injection scan → dedup → embed → persist."
+      />
 
-      <Card>
-        <p className="mb-3 text-xs text-neutral-500">
+      <Card hoverable>
+        <p className="mb-3 text-xs text-[var(--color-muted)]">
           Try an example — the middle and right ones are deliberately marked as a &ldquo;trusted&rdquo;
           source_type to show the content-based scanner catches them anyway:
         </p>
         <div className="flex flex-wrap gap-2">
           {EXAMPLES.map((example) => (
-            <Button key={example.label} variant="secondary" onClick={() => applyExample(example)}>
+            <Button key={example.label} variant="secondary" size="sm" onClick={() => applyExample(example)}>
               {example.label}
             </Button>
           ))}
         </div>
       </Card>
 
-      <Card className="space-y-4">
+      <Card className="space-y-5">
         <Field label="Content">
           <Textarea
             rows={4}
@@ -118,7 +125,7 @@ export default function WritePage() {
           />
         </Field>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="Source type">
             <Select value={sourceType} onChange={(e) => setSourceType(e.target.value)}>
               {SOURCE_TYPES.map((t) => (
@@ -133,7 +140,7 @@ export default function WritePage() {
           </Field>
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label={`Confidence (${confidence.toFixed(2)})`}>
             <input
               type="range"
@@ -142,7 +149,7 @@ export default function WritePage() {
               step={0.01}
               value={confidence}
               onChange={(e) => setConfidence(Number(e.target.value))}
-              className="w-full"
+              className="w-full accent-[var(--color-primary)]"
             />
           </Field>
           <Field label="Allowed purposes (comma-separated)">
@@ -150,7 +157,7 @@ export default function WritePage() {
           </Field>
         </div>
 
-        <Button onClick={submit} disabled={isPending || !content || !customerId}>
+        <Button loading={isPending} disabled={isPending || !content || !customerId} onClick={submit}>
           {isPending ? "Writing…" : "Write memory"}
         </Button>
 

@@ -14,15 +14,18 @@ export default async function CustomerMemoriesPage({
   const memories = await listMemoriesForCustomer(customerId);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div>
-        <Link href="/browse" className="text-sm text-neutral-500 hover:text-neutral-900">
+        <Link
+          href="/browse"
+          className="inline-flex items-center gap-1 text-sm text-[var(--color-muted)] transition-colors hover:text-[var(--color-text)]"
+        >
           ← Back to customers
         </Link>
-        <h1 className="mt-1 text-lg font-semibold text-neutral-900">
-          Memories for <code className="font-mono">{customerId}</code>
+        <h1 className="mt-2 text-2xl font-semibold tracking-tight text-[var(--color-text)]">
+          Memories for <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-lg">{customerId}</code>
         </h1>
-        <p className="mt-1 text-sm text-neutral-600">{memories.length} memory record(s).</p>
+        <p className="mt-1 text-sm text-[var(--color-muted)]">{memories.length} memory record(s).</p>
       </div>
       <MemoryList memories={memories} />
     </div>

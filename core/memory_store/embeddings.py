@@ -25,6 +25,7 @@ ADDING A NEW PROVIDER
 
 from __future__ import annotations
 
+import os
 from abc import ABC, abstractmethod
 
 
@@ -129,32 +130,44 @@ class NullEmbeddingProvider(EmbeddingProvider):
 class OpenAIEmbeddingProvider(EmbeddingProvider):
     """
     OpenAI embeddings via the openai SDK.
-    Requires OPENAI_API_KEY environment variable.
+    Requires OPENAI_API_KEY environment variable (read by the OpenAI() client
+    itself -- never pass keys through call sites or logs).
 
     Models:
-        text-embedding-3-small → 1536 dims  (cheaper)
-        text-embedding-3-large → 3072 dims  (higher quality)
+        text-embedding-3-small → 1536 dims natively (cheaper)
+        text-embedding-3-large → 3072 dims natively (higher quality)
+
+    Both text-embedding-3-* models are Matryoshka-trained, so the API accepts
+    a `dimensions` param to truncate the output to any smaller size without a
+    meaningful quality cliff. Default here is 768 to match this repo's
+    existing `vector(768)` schema column with zero migration required --
+    override via the EMBEDDING_DIM env var (see _build_embedder in
+    api/main.py) if you've migrated the column to a different width.
 
     Install: pip install openai
-
-    Note: if you use this, update the vector column dimension in a new migration.
     """
 
-    def __init__(self, model: str = "text-embedding-3-small"):
+    def __init__(self, model: str = "text-embedding-3-small", dimensions: int = 768):
         try:
             from openai import OpenAI
         except ImportError as exc:
             raise ImportError("Run: pip install openai") from exc
+        if not os.environ.get("OPENAI_API_KEY"):
+            raise RuntimeError(
+                "OPENAI_API_KEY is not set -- required to use OpenAIEmbeddingProvider."
+            )
         self._client = OpenAI()
         self._model = model
-        self._dims = 1536 if "small" in model else 3072
+        self._dims = dimensions
 
     def embed(self, text: str) -> list[float]:
-        resp = self._client.embeddings.create(input=[text], model=self._model)
+        resp = self._client.embeddings.create(
+            input=[text], model=self._model, dimensions=self._dims
+        )
         return resp.data[0].embedding
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        resp = self._client.embeddings.create(input=texts, model=self._model)
+        resp = self._client.embeddings.create(input=texts, model=self._model, dimensions=self._dims)
         return [d.embedding for d in resp.data]
 
     @property

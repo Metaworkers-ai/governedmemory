@@ -51,10 +51,27 @@ from core.models import MemoryRecord, WriteRequest
 
 
 def _build_embedder():
-    """Prefer SentenceTransformerProvider; fall back to NullEmbeddingProvider
-    if the optional embed-local extras aren't installed -- the same fallback
-    frontend/app.py uses, so vector search degrades instead of the server
-    failing to start."""
+    """Real semantic search, in order of preference, each falling through to
+    the next if its dependency/credential isn't available -- so vector search
+    quietly degrades to zero-vectors instead of the server failing to start:
+
+    1. OpenAIEmbeddingProvider, if OPENAI_API_KEY is set (the key is only ever
+       read here, server-side, via the OpenAI SDK's own env lookup -- it is
+       never passed to or exposed in any frontend response).
+    2. SentenceTransformerProvider, if the optional embed-local extras are
+       installed (the same fallback frontend/app.py uses).
+    3. NullEmbeddingProvider (zero vectors) otherwise.
+    """
+    if os.environ.get("OPENAI_API_KEY"):
+        try:
+            from core.memory_store import OpenAIEmbeddingProvider
+
+            dims = int(os.environ.get("EMBEDDING_DIM", "768"))
+            model = os.environ.get("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+            return OpenAIEmbeddingProvider(model=model, dimensions=dims)
+        except ImportError:
+            pass  # openai SDK not installed -- fall through to the next provider
+
     try:
         from core.memory_store import SentenceTransformerProvider
 
