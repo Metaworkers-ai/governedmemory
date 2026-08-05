@@ -1,0 +1,60 @@
+name: Discord daily article
+
+on:
+  schedule:
+    # GitHub Actions cron uses UTC. 03:30 UTC is 09:00 Asia/Kolkata.
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Select an article without posting it"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: discord-daily-article
+  cancel-in-progress: false
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Restore posted-article history
+        uses: actions/cache@v4
+        with:
+          path: .cache/discord-daily
+          key: discord-daily-${{ github.run_id }}
+          restore-keys: |
+            discord-daily-
+
+      - name: Seed posted-article history
+        run: |
+          mkdir -p .cache/discord-daily
+          if [[ ! -f .cache/discord-daily/posted.json ]]; then
+            cp .github/discord-daily-posted-seed.json .cache/discord-daily/posted.json
+          fi
+
+      - name: Select and post article
+        env:
+          DISCORD_DAILY_ARTICLE_WEBHOOK_URL: ${{ secrets.DISCORD_DAILY_ARTICLE_WEBHOOK_URL }}
+          DISCORD_ARTICLE_WEBHOOK_NAME: Governed Memory Daily
+        run: |
+          args=(--state .cache/discord-daily/posted.json)
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.dry_run }}" == "true" ]]; then
+            args+=(--dry-run)
+          fi
+          python scripts/discord_daily_article.py "${args[@]}"
