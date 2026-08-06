@@ -1,0 +1,161 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --bg: #f6f6f3;
+  --bg-elevated: #ffffff;
+  --bg-sunken: #eef0ec;
+  --ink: #14181a;
+  --ink-dim: #5b635f;
+  --ink-faint: #8a928d;
+  --border: #dfe3de;
+  --border-soft: #eceeea;
+
+  --accent: #2f6b63;
+  --accent-ink: #ffffff;
+  --accent-soft: #e2efec;
+  --accent-hover: #285a53;
+
+  --good: #2f7d4f;
+  --good-bg: #e5f3ea;
+  --good-border: #bfe0cc;
+  --warn: #a8681b;
+  --warn-bg: #faefdd;
+  --warn-border: #f0d6ac;
+  --crit: #a3312a;
+  --crit-bg: #fbe7e5;
+  --crit-border: #f0c1bc;
+  --info: #3d5a80;
+  --info-bg: #e7edf5;
+  --info-border: #c4d3e6;
+
+  --chart-1: #2f6b63;
+  --chart-2: #c98a3e;
+  --chart-3: #a3312a;
+  --chart-4: #3d5a80;
+  --chart-5: #6b6f47;
+
+  --shadow-sm: 0 1px 2px rgba(20, 24, 26, 0.05);
+  --shadow-md: 0 4px 16px rgba(20, 24, 26, 0.06), 0 1px 3px rgba(20, 24, 26, 0.08);
+  --shadow-lg: 0 12px 32px rgba(20, 24, 26, 0.10), 0 2px 6px rgba(20, 24, 26, 0.08);
+
+  --radius: 0.65rem;
+}
+
+.dark {
+  --bg: #0e1210;
+  --bg-elevated: #151a18;
+  --bg-sunken: #0a0d0b;
+  --ink: #eaeeeb;
+  --ink-dim: #9aa5a0;
+  --ink-faint: #667169;
+  --border: #232b27;
+  --border-soft: #1a201d;
+
+  --accent: #62c1af;
+  --accent-ink: #06110e;
+  --accent-soft: #172723;
+  --accent-hover: #7ad0bf;
+
+  --good: #5cbb84;
+  --good-bg: #16261c;
+  --good-border: #244a33;
+  --warn: #d9a24f;
+  --warn-bg: #2b2213;
+  --warn-border: #4a3a1e;
+  --crit: #e08279;
+  --crit-bg: #2c1917;
+  --crit-border: #4a2521;
+  --info: #89a9d1;
+  --info-bg: #161f2b;
+  --info-border: #253549;
+
+  --chart-1: #62c1af;
+  --chart-2: #d9a24f;
+  --chart-3: #e08279;
+  --chart-4: #89a9d1;
+  --chart-5: #a6ab7d;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 20px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.45);
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-bg-elevated: var(--bg-elevated);
+  --color-bg-sunken: var(--bg-sunken);
+  --color-ink: var(--ink);
+  --color-ink-dim: var(--ink-dim);
+  --color-ink-faint: var(--ink-faint);
+  --color-border: var(--border);
+  --color-border-soft: var(--border-soft);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-good: var(--good);
+  --color-good-bg: var(--good-bg);
+  --color-warn: var(--warn);
+  --color-warn-bg: var(--warn-bg);
+  --color-crit: var(--crit);
+  --color-crit-bg: var(--crit-bg);
+  --color-info: var(--info);
+  --color-info-bg: var(--info-bg);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+* {
+  border-color: var(--border);
+}
+
+html {
+  color-scheme: light;
+}
+html.dark {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans), -apple-system, "Segoe UI", sans-serif;
+  font-feature-settings: "cv11", "ss01";
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-faint);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+.focus-ring:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

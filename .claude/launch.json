@@ -22,7 +22,7 @@
     {
       "name": "metaworkers-dashboard",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "C:\\Users\\User\\OneDrive\\Desktop\\metaworkers-dashboard", "run", "dev"],
+      "runtimeArgs": ["--prefix", "metaworkers-dashboard", "run", "dev"],
       "port": 3300
     }
   ]
