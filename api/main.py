@@ -41,6 +41,7 @@ from api.schemas import (
     ProvenanceResponse,
     QuarantineBody,
     RetrieveBody,
+    StatsResponse,
     SuccessResponse,
     WriteBody,
 )
@@ -362,6 +363,18 @@ def list_memories(
     Unlike /v1/retrieve, this applies no query, ranking, or privilege gate:
     it is scoped by tenant_id (from the API key) and customer_id only."""
     return store.list_for_customer(tenant_id, customer_id)
+
+
+@app.get("/v1/stats", response_model=StatsResponse)
+def stats(
+    tenant_id: str = Depends(require_tenant),
+    store: MemoryStore = Depends(get_store),
+) -> StatsResponse:
+    """Tenant-scoped memory/customer counts -- added for the dashboard's
+    Statistics page, same rationale as /v1/customers: not part of the
+    original six-route plan, but a frontend can't show live counts without
+    it."""
+    return StatsResponse(**store.get_stats(tenant_id))
 
 
 @app.get("/v1/provenance/{memory_id}", response_model=ProvenanceResponse)

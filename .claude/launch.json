@@ -18,6 +18,12 @@
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "http.server", "4321", "--directory", "site"],
       "port": 4321
+    },
+    {
+      "name": "metaworkers-dashboard",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "C:\\Users\\User\\OneDrive\\Desktop\\metaworkers-dashboard", "run", "dev"],
+      "port": 3300
     }
   ]
 }

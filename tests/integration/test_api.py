@@ -75,6 +75,7 @@ class TestAuth:
             ("get", "/v1/memory/00000000-0000-0000-0000-000000000000/cascade-preview", {}),
             ("get", "/v1/audit", {}),
             ("get", "/v1/customers", {}),
+            ("get", "/v1/stats", {}),
             ("get", "/v1/memories?customer_id=cust-1", {}),
             ("get", "/v1/provenance/00000000-0000-0000-0000-000000000000", {}),
         ],
@@ -345,6 +346,26 @@ class TestCustomersAndMemories:
         resp = client.get("/v1/customers", headers=_auth(KEY_A))
         row = next(c for c in resp.json() if c["customer_id"] == customer_id)
         assert row["memory_count"] == 2
+
+    def test_stats_scoped_to_authenticated_tenant(self, client):
+        marker = str(uuid.uuid4())
+        client.post(
+            "/v1/memory",
+            json=_write_body(customer_id=f"cust-stats-a-{marker}"),
+            headers=_auth(KEY_A),
+        )
+        client.post(
+            "/v1/memory",
+            json=_write_body(customer_id=f"cust-stats-b-{marker}"),
+            headers=_auth(KEY_B),
+        )
+
+        resp = client.get("/v1/stats", headers=_auth(KEY_A))
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["tenant_id"] == TENANT_A
+        assert body["total_memories"] >= 1
+        assert body["total_customers"] >= 1
 
     def test_list_memories_returns_only_that_customers_memories(self, client):
         marker = str(uuid.uuid4())

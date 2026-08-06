@@ -113,3 +113,11 @@ class ExternalQuarantineBody(BaseModel):
     reason: str = "manual quarantine"
     agent_id: str = "system"
     session_id: str = "external-quarantine"
+
+
+class StatsResponse(BaseModel):
+    """Tenant-scoped memory/customer counts, from MemoryStore.get_stats()."""
+
+    tenant_id: str
+    total_memories: int
+    total_customers: int
