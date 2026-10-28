@@ -174,6 +174,52 @@ class TestErrorHandling:
         assert exc_info.value.status_code == 500
         assert exc_info.value.detail == "Internal Server Error"
 
+    @pytest.mark.parametrize(
+        "body",
+        [b"<html>indisponible: \xe9chec</html>", b"\xff\xfe{", b"\x00\x00\xfe\xff\x00"],
+        ids=["invalid-utf8", "truncated-utf16", "truncated-utf32"],
+    )
+    @patch("urllib.request.urlopen")
+    def test_http_error_preserves_status_when_body_cannot_be_decoded(
+        self, mock_urlopen, client, body
+    ):
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            url="http://localhost:8000/v1/audit",
+            code=503,
+            msg="Service Unavailable",
+            hdrs=None,
+            fp=io.BytesIO(body),
+        )
+        with pytest.raises(GovernedMemoryError) as exc_info:
+            client.audit()
+        assert exc_info.value.status_code == 503
+        assert exc_info.value.detail == "Service Unavailable"
+
+    @pytest.mark.parametrize("encoding", ["utf-8", "utf-16", "utf-32"])
+    @patch("urllib.request.urlopen")
+    def test_http_error_keeps_valid_encoded_json_detail(self, mock_urlopen, client, encoding):
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            url="http://localhost:8000/v1/audit",
+            code=500,
+            msg="Internal Server Error",
+            hdrs=None,
+            fp=io.BytesIO(
+                json.dumps({"detail": "\u00e9chec"}, ensure_ascii=False).encode(encoding)
+            ),
+        )
+        with pytest.raises(GovernedMemoryError) as exc_info:
+            client.audit()
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.detail == "\u00e9chec"
+
+    @pytest.mark.parametrize("error", [urllib.error.URLError("offline"), TimeoutError("timed out")])
+    @patch("urllib.request.urlopen")
+    def test_connection_errors_are_not_wrapped(self, mock_urlopen, client, error):
+        mock_urlopen.side_effect = error
+        with pytest.raises(type(error)) as exc_info:
+            client.audit()
+        assert exc_info.value is error
+
     @patch("urllib.request.urlopen")
     def test_error_response_propagates_arbitrary_status_code(self, mock_urlopen, client):
         mock_urlopen.side_effect = urllib.error.HTTPError(

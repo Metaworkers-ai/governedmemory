@@ -16,6 +16,7 @@ from __future__ import annotations
 import threading
 import time
 import uuid
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 import uvicorn
@@ -23,6 +24,34 @@ from metaworkers import GovernedMemory, GovernedMemoryError, Source
 
 TENANT = "tenant-sdk-e2e"
 API_KEY = "sdk-e2e-test-key"
+
+
+class _NonJsonErrorHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(503)
+        self.send_header("Content-Type", "text/plain; charset=iso-8859-1")
+        self.end_headers()
+        self.wfile.write(b"Service indisponible: \xe9chec")
+
+    def log_message(self, format, *args):
+        pass
+
+
+def test_http_error_with_non_utf8_body_preserves_status():
+    with HTTPServer(("127.0.0.1", 0), _NonJsonErrorHandler) as server:
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            client = GovernedMemory(
+                base_url=f"http://127.0.0.1:{server.server_port}", api_key=API_KEY
+            )
+            with pytest.raises(GovernedMemoryError) as exc_info:
+                client.audit()
+            assert exc_info.value.status_code == 503
+            assert exc_info.value.detail == "Service Unavailable"
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
 
 
 @pytest.fixture()

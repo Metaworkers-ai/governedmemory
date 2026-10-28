@@ -198,7 +198,7 @@ class GovernedMemory:
                 try:
                     payload = json.loads(body)
                     detail = payload.get("detail", detail) if isinstance(payload, dict) else payload
-                except json.JSONDecodeError:
+                except (json.JSONDecodeError, UnicodeDecodeError):
                     pass
             if isinstance(detail, dict):
                 code = detail.get("code")
