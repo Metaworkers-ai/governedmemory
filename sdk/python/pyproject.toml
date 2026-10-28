@@ -8,7 +8,8 @@ version = "0.1.0"
 description = "Thin Python client for a self-hosted GovernedMemory REST API server"
 readme = "README.md"
 requires-python = ">=3.8"
-license = "MIT"
+# Python 3.8 uses setuptools versions predating SPDX license expressions.
+license = {text = "MIT"}
 keywords = ["ai-agents", "memory", "llm-security", "prompt-injection", "rag-security"]
 classifiers = [
     "Development Status :: 3 - Alpha",
