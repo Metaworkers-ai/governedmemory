@@ -119,6 +119,25 @@ def test_mem0_add_search_quarantine_and_audit(live_server_url):
     assert metadata["quarantine_audit_id"]
 
 
+@pytest.mark.parametrize(
+    "prefix", ["id?revision=2", "id#section", "id%2Fpart", "has space", "mémoire"]
+)
+def test_external_ids_with_url_characters_can_be_inspected_and_quarantined(live_server_url, prefix):
+    mem0 = DeterministicMem0(prefix=prefix)
+    governance = GovernedMemory(live_server_url, API_KEY)
+    adapter = GovernedMem0(mem0, governance, tenant_id=TENANT)
+    adapter.add(
+        f"customer preference for {prefix}",
+        user_id="customer-paths",
+        source=Source(type="user", ref="message-paths"),
+        idempotency_key=f"external-path-{prefix}",
+    )
+    memory_id = f"{prefix}-1"
+    assert adapter.get_governance(memory_id)["lifecycle_state"] == "active"
+    adapter.quarantine(memory_id, "manual review")
+    assert adapter.get_governance(memory_id)["lifecycle_state"] == "quarantined"
+
+
 def test_strict_untrusted_write_never_reaches_mem0(live_server_url):
     mem0 = DeterministicMem0()
     adapter = GovernedMem0(

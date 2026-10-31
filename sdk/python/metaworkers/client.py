@@ -409,6 +409,7 @@ class GovernedMemory:
         )
 
     def get_external_governance(self, external_memory_id: str) -> dict:
+        external_memory_id = urllib.parse.quote(external_memory_id, safe="")
         return self._request("GET", f"/v1/external-memories/{external_memory_id}/governance")
 
     def quarantine_external_memory(
@@ -419,6 +420,7 @@ class GovernedMemory:
         agent_id: str = "system",
         session_id: str = "external-quarantine",
     ) -> dict:
+        external_memory_id = urllib.parse.quote(external_memory_id, safe="")
         return self._request(
             "POST",
             f"/v1/external-memories/{external_memory_id}/quarantine",
