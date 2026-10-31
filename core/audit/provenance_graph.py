@@ -20,6 +20,7 @@ to compute a cascade-purge delete set.
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field
 
 
@@ -61,9 +62,9 @@ def _walk(start: str, edges: dict[str, list[str]]) -> list[str]:
     """
     visited: set[str] = {start}
     order: list[str] = []
-    queue: list[str] = list(edges.get(start, []))
+    queue = deque(edges.get(start, []))
     while queue:
-        node = queue.pop(0)
+        node = queue.popleft()
         if node in visited:
             continue
         visited.add(node)

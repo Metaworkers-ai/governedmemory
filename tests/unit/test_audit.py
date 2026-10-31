@@ -83,6 +83,16 @@ class TestProvenanceGraph:
         assert graph.ancestors("anything") == []
         assert graph.descendants("anything") == []
 
+    def test_wide_lineage_keeps_breadth_first_order_and_deduplicates(self):
+        children = [f"child-{i}" for i in range(10_000)]
+        graph = build_provenance_graph(
+            [("root", ["shared"])]
+            + [(child, ["root"]) for child in children]
+            + [("shared", children)]
+        )
+        assert graph.descendants("root") == children + ["shared"]
+        assert graph.ancestors("shared") == children + ["root"]
+
 
 # ---------------------------------------------------------------------------
 # cascade_purge.py
